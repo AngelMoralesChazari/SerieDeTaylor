@@ -250,6 +250,7 @@ class MainWindow(QMainWindow):
         self.selected_order = order if order >= 0 else None
         self.canvas.select_order(self.selected_order)
         self.sidebar.select_order(self.selected_order)
+        self.canvas.show_exact_intersection_point()
 
     def _on_point_inspected(self, x_val: float, y_val: float):
         self.status_bar.showMessage(f"Punto inspeccionado: x = {x_val:.4f}, f(x) = {y_val:.4f}")

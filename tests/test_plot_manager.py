@@ -84,3 +84,33 @@ def test_floating_nav_widget_exists(qapp):
     assert canvas.floating_nav.btn_zoom_out is not None
     assert canvas.floating_nav.btn_home is not None
     assert canvas.floating_nav.btn_x0 is not None
+    assert hasattr(canvas.floating_nav, "btn_error")
+
+
+def test_show_exact_intersection_point(qapp):
+    """
+    Verifica que el botón de intersección en la botonera flotante traslade la vista
+    exactamente a x0 = 1.0 y despliegue el globo de error sin desviación de clic (Imagen 2).
+    """
+    engine = TaylorEngine()
+    res = engine.compute_series("x^4 - 3*x^2 + 1", x0=1.0, x_min=-2.5, x_max=2.5, max_order=4)
+
+    canvas = GeoGebraCartesianCanvas()
+    canvas.update_data(res)
+
+    # Invocar el traslado exacto a la intersección
+    canvas.floating_nav.btn_error.click()
+
+    # Comprobar que la vista quedó centrada exactamente en x0 = 1.0
+    xlim = canvas.ax.get_xlim()
+    cx = (xlim[0] + xlim[1]) / 2.0
+    assert abs(cx - 1.0) < 1e-4
+
+    # Comprobar que el tooltip explicativo (Imagen 2) se creó y contiene el error matemático
+    assert canvas.tooltip_annotation is not None
+    text = canvas.tooltip_annotation.get_text()
+    assert "x = 1" in text
+    assert "f(x) = -1" in text
+    assert "P_4(x) = -1" in text
+    assert "Error = 0" in text or "0.00" in text
+

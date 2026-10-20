@@ -10,7 +10,7 @@ Diseñado con la estética minimalista y limpia de GeoGebra:
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import matplotlib
 matplotlib.use("QtAgg")
@@ -73,34 +73,35 @@ class GraphFloatingNavWidget(QFrame):
 
         # Botón Zoom In (+)
         self.btn_zoom_in = QPushButton("+")
-        self.btn_zoom_in.setFixedSize(28, 28)
+        self.btn_zoom_in.setFixedSize(30, 30)
         self.btn_zoom_in.setToolTip("Acercar (Zoom +)")
         self.btn_zoom_in.clicked.connect(lambda: self.canvas.zoom(0.82))
         layout.addWidget(self.btn_zoom_in)
 
         # Botón Zoom Out (-)
         self.btn_zoom_out = QPushButton("−")
-        self.btn_zoom_out.setFixedSize(28, 28)
+        self.btn_zoom_out.setFixedSize(30, 30)
         self.btn_zoom_out.setToolTip("Alejar (Zoom -)")
         self.btn_zoom_out.clicked.connect(lambda: self.canvas.zoom(1.22))
         layout.addWidget(self.btn_zoom_out)
 
         # Botón Reajustar vista óptima (Home / Auto-fit)
         self.btn_home = QPushButton("⌂")
-        self.btn_home.setFixedSize(28, 28)
+        self.btn_home.setFixedSize(30, 30)
         self.btn_home.setToolTip("Restablecer vista a la curvatura de f(x) (Home)")
         self.btn_home.clicked.connect(self.canvas.auto_fit_view)
         layout.addWidget(self.btn_home)
 
-        # Botón Centrar en x0
-        self.btn_x0 = QPushButton("🎯")
-        self.btn_x0.setFixedSize(28, 28)
-        self.btn_x0.setToolTip("Centrar en el punto de expansión x₀")
-        self.btn_x0.clicked.connect(self.canvas.center_on_x0)
-        layout.addWidget(self.btn_x0)
+        # Botón Ir al Punto de Error / Intersección Exacta (Imagen 2)
+        self.btn_error = QPushButton("🎯")
+        self.btn_error.setFixedSize(30, 30)
+        self.btn_error.setToolTip("🎯 Ir a la intersección y punto de error exacto (sin error de clic)")
+        self.btn_error.clicked.connect(lambda: self.canvas.show_exact_intersection_point())
+        self.btn_x0 = self.btn_error
+        layout.addWidget(self.btn_error)
 
     def update_style(self):
-        bg = "rgba(24, 24, 27, 0.88)" if self.is_dark_mode else "rgba(255, 255, 255, 0.92)"
+        bg = "rgba(24, 24, 27, 0.94)" if self.is_dark_mode else "rgba(255, 255, 255, 0.96)"
         border = "#3f3f46" if self.is_dark_mode else "#cbd5e1"
         btn_bg = "#27272a" if self.is_dark_mode else "#f8fafc"
         btn_hover = "#3f3f46" if self.is_dark_mode else "#e2e8f0"
@@ -109,23 +110,27 @@ class GraphFloatingNavWidget(QFrame):
         self.setStyleSheet(
             f"GraphFloatingNavWidget {{"
             f"  background-color: {bg};"
-            f"  border: 1px solid {border};"
+            f"  border: 1.5px solid {border};"
             f"  border-radius: 8px;"
             f"}}"
-            f"QPushButton {{"
+            f"GraphFloatingNavWidget QPushButton {{"
             f"  background-color: {btn_bg};"
-            f"  color: {btn_fg};"
+            f"  color: {btn_fg} !important;"
             f"  border: 1px solid {border};"
             f"  border-radius: 6px;"
-            f"  font-size: 13px;"
+            f"  font-size: 14px;"
             f"  font-weight: 700;"
+            f"  padding: 0px !important;"
+            f"  margin: 0px !important;"
+            f"  text-align: center;"
             f"}}"
-            f"QPushButton:hover {{"
+            f"GraphFloatingNavWidget QPushButton:hover {{"
             f"  background-color: {btn_hover};"
+            f"  border-color: #3b82f6;"
             f"}}"
-            f"QPushButton:pressed {{"
+            f"GraphFloatingNavWidget QPushButton:pressed {{"
             f"  background-color: #2563eb;"
-            f"  color: #ffffff;"
+            f"  color: #ffffff !important;"
             f"}}"
         )
 
@@ -325,9 +330,9 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         # 4. Ajustar vista al intervalo especificado [x_min, x_max] con escala geométrica que resalta las curvas
         self.auto_fit_view()
 
-        # 5. Leyenda sobria en esquina
+        # 5. Leyenda sobria en upper left para evitar colisión con la botonera flotante
         legend = self.ax.legend(
-            loc="upper right",
+            loc="upper left",
             frameon=True,
             facecolor="#18181b" if self.is_dark_mode else "#ffffff",
             edgecolor="#3f3f46" if self.is_dark_mode else "#e2e8f0",
@@ -416,25 +421,43 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         self.ax.set_ylim(cy - new_h / 2.0, cy + new_h / 2.0)
         self.draw_idle()
 
-    def center_on_x0(self):
-        """Centra la vista en el punto de expansión x0."""
+    def show_exact_intersection_point(self, x_val: Optional[Union[float, bool]] = None):
+        """
+        Traslada la vista directamente al punto de intersección / expansión x0 (o x_val)
+        y despliega el cuadro explicativo con el valor exacto de f(x), P_k(x) y el error,
+        eliminando cualquier desviación o duda de 1px por clic manual (Imagen 2).
+        """
         if self.taylor_result is None:
             return
-        x0 = self.taylor_result.x0
-        try:
-            y0 = float(self.taylor_result.func_eval(x0))
-            if not np.isfinite(y0):
-                y0 = 0.0
-        except Exception:
-            y0 = 0.0
 
+        res = self.taylor_result
+        if x_val is None or isinstance(x_val, bool):
+            target_x = float(res.x0)
+        else:
+            target_x = float(x_val)
+
+        try:
+            yf = float(res.func_eval(target_x))
+            if not np.isfinite(yf):
+                yf = 0.0
+        except Exception:
+            yf = 0.0
+
+        # Centrar suavemente los límites de los ejes en el punto exacto
         cur_xlim = self.ax.get_xlim()
         cur_ylim = self.ax.get_ylim()
         w = cur_xlim[1] - cur_xlim[0]
         h = cur_ylim[1] - cur_ylim[0]
-        self.ax.set_xlim(x0 - w / 2.0, x0 + w / 2.0)
-        self.ax.set_ylim(y0 - h / 2.0, y0 + h / 2.0)
+        self.ax.set_xlim(target_x - w / 2.0, target_x + w / 2.0)
+        self.ax.set_ylim(yf - h / 2.0, yf + h / 2.0)
+
+        # Mostrar el globo de error idéntico a la Imagen 2 en las coordenadas exactas
+        self._show_click_tooltip_coords(target_x, yf)
         self.draw_idle()
+
+    def center_on_x0(self):
+        """Centra la vista en el punto de expansión x0 y muestra el error exacto."""
+        self.show_exact_intersection_point()
 
     def pan_by(self, dx_ratio: float, dy_ratio: float):
         """Desplaza la vista por una fracción del tamaño visible."""
