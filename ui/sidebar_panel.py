@@ -816,9 +816,9 @@ class SidebarPanel(QWidget):
         f_box_layout.setContentsMargins(6, 6, 6, 6)
         f_box_layout.setSpacing(4)
 
-        lbl_f_title = QLabel("Fórmula de Taylor Construida:")
-        lbl_f_title.setStyleSheet("font-weight: 700; font-size: 11px; color: #2563eb;")
-        f_box_layout.addWidget(lbl_f_title)
+        #lbl_f_title = QLabel("Fórmula de Taylor Construida:")
+        #lbl_f_title.setStyleSheet("font-weight: 700; font-size: 11px; color: #2563eb;")
+        #f_box_layout.addWidget(lbl_f_title)
 
         self.scroll_final = QScrollArea()
         self.scroll_final.setWidgetResizable(True)

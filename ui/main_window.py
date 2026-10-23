@@ -60,10 +60,7 @@ class MainWindow(QMainWindow):
         self.solve_series("x^4 - 3x^2 + 1", x0=1.0, x_min=-2.5, x_max=2.5, max_order=4)
 
     def _init_ui(self):
-        # 1. Barra superior
-        self._create_top_toolbar()
-
-        # 2. Contenedor central principal
+        # 1. Contenedor central principal
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
@@ -74,17 +71,21 @@ class MainWindow(QMainWindow):
         self.main_splitter = QSplitter(Qt.Horizontal)
         self.main_splitter.setHandleWidth(5)
 
-        # Panel Izquierdo: (Vista Álgebra y Paso a Paso)
+        # Panel Izquierdo: (Vista Álgebra y Paso a Paso) - ocupa toda la altura del lateral izquierdo
         self.sidebar = SidebarPanel(is_dark_mode=self.is_dark_mode)
         self.sidebar.setMinimumWidth(320)
         self.sidebar.setMaximumWidth(1000) # Ancho máximo expandible del panel izquierdo
         self.main_splitter.addWidget(self.sidebar)
 
-        # Panel Central: Gráfica protagonista y Teclado alineado
+        # Panel Central: Barra superior alineada a la derecha, Gráfica protagonista y Teclado
         self.center_graph_panel = QWidget()
         graph_vbox = QVBoxLayout(self.center_graph_panel)
         graph_vbox.setContentsMargins(0, 0, 0, 0)
         graph_vbox.setSpacing(0)
+
+        # Barra superior ubicada exclusivamente sobre el panel derecho, con botones desplazados a la derecha
+        self.top_toolbar = self._create_top_toolbar()
+        graph_vbox.addWidget(self.top_toolbar)
 
         # Lienzo Cartesiano Matplotlib puro estilo GeoGebra (con botonera flotante y navegación por arrastre)
         self.canvas = GeoGebraCartesianCanvas(is_dark_mode=self.is_dark_mode)
@@ -92,7 +93,7 @@ class MainWindow(QMainWindow):
         self.canvas_toolbar.hide()
         graph_vbox.addWidget(self.canvas, stretch=1)
 
-        # 3. Teclado matemático virtual GeoGebra (ubicado únicamente en el panel derecho debajo de la gráfica)
+        # 3. Teclado matemático virtual GeoGebra (ubicado en el panel derecho debajo de la gráfica)
         self.virtual_keyboard = GeoGebraVirtualKeyboard(is_dark_mode=self.is_dark_mode)
         self.virtual_keyboard.set_target_input(self.sidebar.input_fx)
         self.virtual_keyboard.expression_confirmed.connect(self.sidebar._on_solve_clicked)
@@ -113,11 +114,15 @@ class MainWindow(QMainWindow):
 
         self._connect_signals()
 
-    def _create_top_toolbar(self):
+    def _create_top_toolbar(self) -> QToolBar:
         toolbar = QToolBar("Barra GeoGebra")
         toolbar.setIconSize(QSize(18, 18))
         toolbar.setMovable(False)
-        self.addToolBar(toolbar)
+
+        # Espaciador para desplazar todas las opciones a la derecha junto a Modo Oscuro
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        toolbar.addWidget(spacer)
 
         btn_table = QPushButton("📊 Tabla de Valores")
         btn_table.clicked.connect(self._open_values_table)
@@ -139,14 +144,13 @@ class MainWindow(QMainWindow):
         self.btn_toggle_kbd.clicked.connect(self._toggle_virtual_keyboard)
         toolbar.addWidget(self.btn_toggle_kbd)
 
-        # Espaciador
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        toolbar.addWidget(spacer)
+        toolbar.addSeparator()
 
         self.btn_theme = QPushButton("🌙 Modo Oscuro")
         self.btn_theme.clicked.connect(self._toggle_theme)
         toolbar.addWidget(self.btn_theme)
+
+        return toolbar
 
     def _connect_signals(self):
         self.sidebar.solve_requested.connect(self.solve_series)

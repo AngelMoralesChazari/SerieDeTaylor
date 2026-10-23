@@ -194,7 +194,6 @@ class ExportManager:
         # Fórmula final construida
         html.append(f"""
         <div style="background-color: #eff6ff; border: 2px solid #2563eb; border-radius: 6px; padding: 10px; margin-top: 14px;">
-            <b>Fórmula de Taylor Construida:</b><br/>
             <span class="formula" style="font-size: 11pt; color: #1e40af;">f(x) ≈ {result.constructed_taylor_formula_latex}</span><br/><br/>
             <b>Forma Expandida:</b><br/>
             <span class="formula">{result.expanded_formula_latex}</span>
