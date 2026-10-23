@@ -190,4 +190,42 @@ def test_whiteboard_ui_integration():
     assert panel.advanced_container.isHidden() is True
 
 
+def test_taylor_options_dialog_popup():
+    """
+    Verifica que el diálogo modal pop-up TaylorOptionsDialog permita configurar
+    x0, orden n, intervalo y opciones adicionales, actualizando el resumen en SidebarPanel.
+    """
+    from PySide6.QtWidgets import QApplication
+    from ui.sidebar_panel import SidebarPanel
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+
+    panel = SidebarPanel()
+
+    # Comprobar que el botón de opciones existe y el resumen inicial es correcto
+    assert panel.btn_options is not None
+    assert "x₀=1" in panel.lbl_options_summary.text()
+    assert "n=4" in panel.lbl_options_summary.text()
+
+    # Modificar valores en el diálogo
+    panel.options_dialog.spin_x0.setValue(2.0)
+    panel.options_dialog.spin_order.setValue(5)
+    panel.options_dialog.spin_xmin.setValue(-4.0)
+    panel.options_dialog.spin_xmax.setValue(4.0)
+    panel.options_dialog.chk_advanced.setChecked(True)
+    panel.options_dialog.spin_x_eval.setValue(1.75)
+
+    # Aplicar
+    panel.options_dialog._on_apply_clicked()
+
+    # Comprobar que se reflejan en el resumen del panel
+    text = panel.lbl_options_summary.text()
+    assert "x₀=2" in text
+    assert "n=5" in text
+    assert "[-4, 4]" in text
+    assert "x*=1.75" in text
+
+
 

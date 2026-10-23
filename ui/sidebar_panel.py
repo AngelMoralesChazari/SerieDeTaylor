@@ -12,7 +12,8 @@ import numpy as np
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QDoubleSpinBox, QSpinBox, QPushButton, QTabWidget,
-    QScrollArea, QFrame, QCheckBox, QMessageBox, QGridLayout, QComboBox
+    QScrollArea, QFrame, QCheckBox, QMessageBox, QGridLayout, QComboBox,
+    QDialog
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPixmap
@@ -417,6 +418,228 @@ class WhiteboardConvergenceWidget(QFrame):
         self.layout_main.addWidget(btn_inspect)
 
 
+class TaylorOptionsDialog(QDialog):
+    """
+    Diálogo modal pop-up estilo GeoGebra para configurar los parámetros de la Serie de Taylor:
+    - Punto de expansión x0 (a)
+    - Orden máximo n
+    - Intervalo de graficación [x_min, x_max]
+    - Opciones adicionales (Evaluar en x puntual, Tolerancia de error)
+    """
+    options_applied = Signal()
+
+    def __init__(self, parent=None, is_dark_mode: bool = False):
+        super().__init__(parent)
+        self.is_dark_mode = is_dark_mode
+        self.setWindowTitle("Configuración de Parámetros")
+        self.setModal(True)
+        self.setMinimumWidth(380)
+        self._setup_ui()
+        self.apply_theme(self.is_dark_mode)
+
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+
+        lbl_head = QLabel("⚙ Parámetros de la Serie de Taylor")
+        lbl_head.setStyleSheet("font-size: 14px; font-weight: 700; color: #2563eb;")
+        layout.addWidget(lbl_head)
+
+        lbl_sub = QLabel("Configura los valores del desarrollo y el rango del plano cartesiano:")
+        lbl_sub.setStyleSheet("font-size: 11px; color: #64748b;")
+        lbl_sub.setWordWrap(True)
+        layout.addWidget(lbl_sub)
+
+        # 1. Parámetros Principales
+        box_main = QFrame()
+        box_main.setObjectName("optionsGroup")
+        lay_main = QVBoxLayout(box_main)
+        lay_main.setContentsMargins(12, 12, 12, 12)
+        lay_main.setSpacing(8)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(8)
+
+        grid.addWidget(QLabel("Punto x₀ (a):"), 0, 0)
+        self.spin_x0 = QDoubleSpinBox()
+        self.spin_x0.setRange(-1000.0, 1000.0)
+        self.spin_x0.setDecimals(2)
+        self.spin_x0.setValue(1.0)
+        grid.addWidget(self.spin_x0, 0, 1)
+
+        grid.addWidget(QLabel("Orden máx (n):"), 0, 2)
+        self.spin_order = QSpinBox()
+        self.spin_order.setRange(0, 12)
+        self.spin_order.setValue(4)
+        grid.addWidget(self.spin_order, 0, 3)
+
+        grid.addWidget(QLabel("Intervalo de:"), 1, 0)
+        self.spin_xmin = QDoubleSpinBox()
+        self.spin_xmin.setRange(-1000.0, 1000.0)
+        self.spin_xmin.setDecimals(2)
+        self.spin_xmin.setValue(-2.5)
+        grid.addWidget(self.spin_xmin, 1, 1)
+
+        grid.addWidget(QLabel("hasta:"), 1, 2)
+        self.spin_xmax = QDoubleSpinBox()
+        self.spin_xmax.setRange(-1000.0, 1000.0)
+        self.spin_xmax.setDecimals(2)
+        self.spin_xmax.setValue(2.5)
+        grid.addWidget(self.spin_xmax, 1, 3)
+
+        lay_main.addLayout(grid)
+        layout.addWidget(box_main)
+
+        # 2. Opciones Adicionales (Punto b y tolerancia)
+        box_adv = QFrame()
+        box_adv.setObjectName("optionsGroup")
+        lay_adv = QVBoxLayout(box_adv)
+        lay_adv.setContentsMargins(12, 12, 12, 12)
+        lay_adv.setSpacing(6)
+
+        self.chk_advanced = QCheckBox("Opciones adicionales (Evaluación y Tolerancia)")
+        self.chk_advanced.setChecked(False)
+        self.chk_advanced.setCursor(Qt.PointingHandCursor)
+        self.chk_advanced.setStyleSheet("font-size: 11px; font-weight: 600; color: #2563eb;")
+        self.chk_advanced.toggled.connect(self._on_adv_toggled)
+        lay_adv.addWidget(self.chk_advanced)
+
+        self.advanced_container = QWidget()
+        lay_adv_grid = QGridLayout(self.advanced_container)
+        lay_adv_grid.setContentsMargins(0, 4, 0, 0)
+        lay_adv_grid.setHorizontalSpacing(10)
+        lay_adv_grid.setVerticalSpacing(8)
+
+        lay_adv_grid.addWidget(QLabel("Evaluar en x:"), 0, 0)
+        self.spin_x_eval = QDoubleSpinBox()
+        self.spin_x_eval.setRange(-1000.0, 1000.0)
+        self.spin_x_eval.setDecimals(3)
+        self.spin_x_eval.setSingleStep(0.05)
+        self.spin_x_eval.setValue(1.25)
+        lay_adv_grid.addWidget(self.spin_x_eval, 0, 1)
+
+        lay_adv_grid.addWidget(QLabel("Tolerancia error:"), 1, 0)
+        self.combo_tolerance = QComboBox()
+        self.combo_tolerance.addItem("10⁻³ (0.001) [Pizarrón]", 0.001)
+        self.combo_tolerance.addItem("10⁻⁴ (0.0001) [Pizarrón]", 0.0001)
+        self.combo_tolerance.addItem("10⁻² (0.01)", 0.01)
+        self.combo_tolerance.addItem("10⁻⁵ (0.00001)", 0.00001)
+        self.combo_tolerance.addItem("Sin límite", None)
+        lay_adv_grid.addWidget(self.combo_tolerance, 1, 1)
+
+        self.advanced_container.setVisible(False)
+        lay_adv.addWidget(self.advanced_container)
+        layout.addWidget(box_adv)
+
+        # Botones inferiores: Cancelar y Aplicar
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(10)
+        btn_layout.addStretch()
+
+        self.btn_cancel = QPushButton("Cancelar")
+        self.btn_cancel.setFixedSize(90, 32)
+        self.btn_cancel.clicked.connect(self.reject)
+        btn_layout.addWidget(self.btn_cancel)
+
+        self.btn_apply = QPushButton("✓ Aplicar")
+        self.btn_apply.setFixedSize(110, 32)
+        self.btn_apply.setProperty("class", "primary")
+        self.btn_apply.clicked.connect(self._on_apply_clicked)
+        btn_layout.addWidget(self.btn_apply)
+
+        layout.addLayout(btn_layout)
+
+    def _on_adv_toggled(self, checked: bool):
+        self.advanced_container.setVisible(checked)
+
+    def open_dialog(self):
+        self._backup = {
+            "x0": self.spin_x0.value(),
+            "order": self.spin_order.value(),
+            "xmin": self.spin_xmin.value(),
+            "xmax": self.spin_xmax.value(),
+            "adv": self.chk_advanced.isChecked(),
+            "x_eval": self.spin_x_eval.value(),
+            "tol_idx": self.combo_tolerance.currentIndex(),
+        }
+        self.exec()
+
+    def reject(self):
+        if hasattr(self, "_backup"):
+            self.spin_x0.setValue(self._backup["x0"])
+            self.spin_order.setValue(self._backup["order"])
+            self.spin_xmin.setValue(self._backup["xmin"])
+            self.spin_xmax.setValue(self._backup["xmax"])
+            self.chk_advanced.setChecked(self._backup["adv"])
+            self.spin_x_eval.setValue(self._backup["x_eval"])
+            self.combo_tolerance.setCurrentIndex(self._backup["tol_idx"])
+        super().reject()
+
+    def _on_apply_clicked(self):
+        x_min = self.spin_xmin.value()
+        x_max = self.spin_xmax.value()
+        if x_min >= x_max:
+            QMessageBox.warning(
+                self, "Intervalo Inválido",
+                f"El límite inferior ({x_min:g}) debe ser menor que el límite superior ({x_max:g})."
+            )
+            return
+        self.accept()
+        self.options_applied.emit()
+
+    def apply_theme(self, is_dark: bool):
+        self.is_dark_mode = is_dark
+        bg = "#18181b" if is_dark else "#ffffff"
+        text = "#f4f4f5" if is_dark else "#0f172a"
+        card_bg = "#27272a" if is_dark else "#f8fafc"
+        border = "#3f3f46" if is_dark else "#cbd5e1"
+        btn_bg = "#3f3f46" if is_dark else "#e2e8f0"
+        btn_text = "#f4f4f5" if is_dark else "#0f172a"
+
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {bg};
+                color: {text};
+            }}
+            QFrame#optionsGroup {{
+                background-color: {card_bg};
+                border: 1px solid {border};
+                border-radius: 8px;
+            }}
+            QLabel {{
+                color: {text};
+            }}
+            QDoubleSpinBox, QSpinBox, QComboBox {{
+                background-color: {bg};
+                border: 1px solid {border};
+                border-radius: 4px;
+                padding: 3px 6px;
+                color: {text};
+            }}
+            QPushButton {{
+                background-color: {btn_bg};
+                color: {btn_text};
+                border: 1px solid {border};
+                border-radius: 6px;
+                font-weight: 600;
+                padding: 4px 12px;
+            }}
+            QPushButton:hover {{
+                border-color: #3b82f6;
+            }}
+            QPushButton[class="primary"] {{
+                background-color: #2563eb;
+                color: #ffffff;
+                border: none;
+            }}
+            QPushButton[class="primary"]:hover {{
+                background-color: #1d4ed8;
+            }}
+        """)
+
+
 class SidebarPanel(QWidget):
     """
     Panel lateral ("Vista Álgebra"):
@@ -437,6 +660,20 @@ class SidebarPanel(QWidget):
 
         self.cards_map: Dict[int, GeoGebraAlgebraCard] = {}
         self.selected_order: Optional[int] = None
+
+        # Pop-up modal de configuración de parámetros estilo GeoGebra
+        self.options_dialog = TaylorOptionsDialog(self, is_dark_mode=self.is_dark_mode)
+        self.spin_x0 = self.options_dialog.spin_x0
+        self.spin_order = self.options_dialog.spin_order
+        self.spin_xmin = self.options_dialog.spin_xmin
+        self.spin_xmax = self.options_dialog.spin_xmax
+        self.spin_x_eval = self.options_dialog.spin_x_eval
+        self.combo_tolerance = self.options_dialog.combo_tolerance
+        self.chk_advanced = self.options_dialog.chk_advanced
+        self.advanced_container = self.options_dialog.advanced_container
+
+        self.options_dialog.options_applied.connect(self._on_options_applied)
+        self.chk_advanced.toggled.connect(self._on_advanced_toggled)
 
         self._init_ui()
 
@@ -474,76 +711,24 @@ class SidebarPanel(QWidget):
         in_layout.addWidget(self.lbl_preview_fx)
         self._update_fx_preview("x^4 - 3x^2 + 1")
 
-        # Configuración de x0, intervalo [x_min, x_max], orden n y parámetros de evaluación Parte b
-        grid_cfg = QGridLayout()
-        grid_cfg.setSpacing(4)
+        # Fila compacta de Opciones y Resumen de Parámetros (Abre pop-up modal para ahorrar espacio vertical)
+        opts_row = QHBoxLayout()
+        opts_row.setContentsMargins(0, 2, 0, 2)
+        opts_row.setSpacing(6)
 
-        # Fila 0: Punto de expansión x0 (Punto a) y Orden máximo n
-        grid_cfg.addWidget(QLabel("Punto x₀ (a):"), 0, 0)
-        self.spin_x0 = QDoubleSpinBox()
-        self.spin_x0.setRange(-1000.0, 1000.0)
-        self.spin_x0.setDecimals(2)
-        self.spin_x0.setValue(1.0)
-        grid_cfg.addWidget(self.spin_x0, 0, 1)
+        self.btn_options = QPushButton("⚙ Opciones...")
+        self.btn_options.setToolTip("Abrir ventana modal para configurar punto x₀, orden n, intervalo y opciones avanzadas")
+        self.btn_options.setFixedHeight(28)
+        self.btn_options.setCursor(Qt.PointingHandCursor)
+        self.btn_options.clicked.connect(self._open_options_dialog)
+        opts_row.addWidget(self.btn_options)
 
-        grid_cfg.addWidget(QLabel("Orden máx (n):"), 0, 2)
-        self.spin_order = QSpinBox()
-        self.spin_order.setRange(0, 12)
-        self.spin_order.setValue(4)
-        grid_cfg.addWidget(self.spin_order, 0, 3)
+        self.lbl_options_summary = QLabel()
+        self.lbl_options_summary.setStyleSheet("font-size: 11px; font-weight: 600; color: #2563eb; padding-left: 4px;")
+        self._update_options_summary()
+        opts_row.addWidget(self.lbl_options_summary, stretch=1)
 
-        # Fila 1: Intervalo [x_min, x_max]
-        grid_cfg.addWidget(QLabel("Intervalo de:"), 1, 0)
-        self.spin_xmin = QDoubleSpinBox()
-        self.spin_xmin.setRange(-1000.0, 1000.0)
-        self.spin_xmin.setDecimals(2)
-        self.spin_xmin.setValue(-3.0)
-        grid_cfg.addWidget(self.spin_xmin, 1, 1)
-
-        grid_cfg.addWidget(QLabel("hasta:"), 1, 2)
-        self.spin_xmax = QDoubleSpinBox()
-        self.spin_xmax.setRange(-1000.0, 1000.0)
-        self.spin_xmax.setDecimals(2)
-        self.spin_xmax.setValue(3.0)
-        grid_cfg.addWidget(self.spin_xmax, 1, 3)
-
-        in_layout.addLayout(grid_cfg)
-
-        # Checkbox para Opciones adicionales (Evaluación en punto y tolerancia de error)
-        self.chk_advanced = QCheckBox("Opciones adicionales")
-        self.chk_advanced.setChecked(False)
-        self.chk_advanced.setCursor(Qt.PointingHandCursor)
-        self.chk_advanced.setStyleSheet("font-size: 11px; font-weight: 600; color: #2563eb; margin-top: 2px;")
-        self.chk_advanced.toggled.connect(self._on_advanced_toggled)
-        in_layout.addWidget(self.chk_advanced)
-
-        # Contenedor desplegable para opciones adicionales
-        self.advanced_container = QWidget()
-        grid_adv = QGridLayout(self.advanced_container)
-        grid_adv.setContentsMargins(0, 2, 0, 2)
-        grid_adv.setSpacing(4)
-
-        grid_adv.addWidget(QLabel("Evaluar en x:"), 0, 0)
-        self.spin_x_eval = QDoubleSpinBox()
-        self.spin_x_eval.setRange(-1000.0, 1000.0)
-        self.spin_x_eval.setDecimals(3)
-        self.spin_x_eval.setSingleStep(0.05)
-        self.spin_x_eval.setValue(1.25)
-        self.spin_x_eval.valueChanged.connect(self._on_eval_param_changed)
-        grid_adv.addWidget(self.spin_x_eval, 0, 1)
-
-        grid_adv.addWidget(QLabel("Tolerancia error:"), 0, 2)
-        self.combo_tolerance = QComboBox()
-        self.combo_tolerance.addItem("10⁻³ (0.001) [Pizarrón]", 0.001)
-        self.combo_tolerance.addItem("10⁻⁴ (0.0001) [Pizarrón]", 0.0001)
-        self.combo_tolerance.addItem("10⁻² (0.01)", 0.01)
-        self.combo_tolerance.addItem("10⁻⁵ (0.00001)", 0.00001)
-        self.combo_tolerance.addItem("Sin límite", None)
-        self.combo_tolerance.currentIndexChanged.connect(self._on_eval_param_changed)
-        grid_adv.addWidget(self.combo_tolerance, 0, 3)
-
-        self.advanced_container.setVisible(False)
-        in_layout.addWidget(self.advanced_container)
+        in_layout.addLayout(opts_row)
 
         # Botón Resolver
         self.btn_solve = QPushButton("▶ Resolver Serie de Taylor")
@@ -719,6 +904,9 @@ class SidebarPanel(QWidget):
 
     def set_dark_mode(self, is_dark: bool):
         self.is_dark_mode = is_dark
+        if hasattr(self, "options_dialog"):
+            self.options_dialog.apply_theme(is_dark)
+        self._update_options_summary()
         self._update_fx_preview(self.input_fx.text())
         if hasattr(self, "whiteboard_widget_tab"):
             self.whiteboard_widget_tab.is_dark_mode = is_dark
@@ -777,11 +965,32 @@ class SidebarPanel(QWidget):
                 self.combo_tolerance.setCurrentIndex(idx)
                 return
 
+    def _open_options_dialog(self):
+        self.options_dialog.open_dialog()
+
+    def _on_options_applied(self):
+        self._update_options_summary()
+        self._on_advanced_toggled(self.chk_advanced.isChecked())
+
+    def _update_options_summary(self):
+        if not hasattr(self, "spin_x0") or not hasattr(self, "lbl_options_summary"):
+            return
+        x0 = self.spin_x0.value()
+        order = self.spin_order.value()
+        xmin = self.spin_xmin.value()
+        xmax = self.spin_xmax.value()
+        adv = self.chk_advanced.isChecked()
+        color = "#60a5fa" if self.is_dark_mode else "#2563eb"
+        self.lbl_options_summary.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {color}; padding-left: 4px;")
+        summary = f"x₀={x0:g} | n={order} | [{xmin:g}, {xmax:g}]"
+        if adv:
+            summary += f" | x*={self.spin_x_eval.value():g}"
+        self.lbl_options_summary.setText(summary)
+
     def _on_eval_param_changed(self):
         self._update_evaluation_views()
 
     def _on_advanced_toggled(self, checked: bool):
-        self.advanced_container.setVisible(checked)
         if hasattr(self, "tabs") and hasattr(self.tabs, "setTabVisible"):
             self.tabs.setTabVisible(2, checked)
         if checked and self.result is not None:
@@ -911,3 +1120,5 @@ class SidebarPanel(QWidget):
             self.chk_advanced.setChecked(True)
         else:
             self.chk_advanced.setChecked(False)
+        self._update_options_summary()
+        self._on_advanced_toggled(self.chk_advanced.isChecked())
