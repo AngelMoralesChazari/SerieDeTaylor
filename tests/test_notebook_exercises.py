@@ -148,6 +148,7 @@ def test_whiteboard_ui_integration():
     """
     Verifica que SidebarPanel y WhiteboardConvergenceWidget rendericen
     correctamente la Parte b del pizarrón y detecten las tolerancias 10^-3 y 10^-4.
+    También verifica que 'Opciones adicionales' oculte y muestre las entradas según el checkbox.
     """
     from PySide6.QtWidgets import QApplication
     from ui.sidebar_panel import SidebarPanel
@@ -157,22 +158,36 @@ def test_whiteboard_ui_integration():
         app = QApplication([])
 
     panel = SidebarPanel()
+
+    # A primera vista: el checkbox de opciones adicionales está desmarcado y las opciones ocultas
+    assert panel.chk_advanced.isChecked() is False
+    assert panel.advanced_container.isHidden() is True
+
+    # Al marcar el checkbox, se hacen visibles
+    panel.chk_advanced.setChecked(True)
+    assert panel.advanced_container.isHidden() is False
+
     panel.set_inputs("ln(x)", 1.0, 0.2, 2.5, 6, x_eval=1.25, tolerance=0.001)
+    assert panel.chk_advanced.isChecked() is True
+    assert panel.advanced_container.isHidden() is False
 
     engine = TaylorEngine()
     res = engine.compute_series("ln(x)", x0=1.0, x_min=0.2, x_max=2.5, max_order=6)
     panel.display_results(res)
 
-    # Comprobar que ambos widgets (en Paso a Paso y en la Pestaña 3) recibieron los datos
-    assert panel.whiteboard_widget_steps.eval_data is not None
+    # Comprobar que el widget en la Pestaña 3 (Evaluación) recibió los datos
     assert panel.whiteboard_widget_tab.eval_data is not None
-    assert panel.whiteboard_widget_steps.eval_data["best_order"] == 4
+    assert panel.whiteboard_widget_tab.eval_data["best_order"] == 4
 
     # Cambiar tolerancia a 10^-4 (0.0001) como anotó el profesor en el pizarrón
     panel.set_tolerance(0.0001)
     panel._on_eval_param_changed()
 
-    assert panel.whiteboard_widget_steps.eval_data["best_order"] == 6
     assert panel.whiteboard_widget_tab.eval_data["best_order"] == 6
+
+    # Al desmarcar el checkbox de opciones adicionales, se oculta el contenedor
+    panel.chk_advanced.setChecked(False)
+    assert panel.advanced_container.isHidden() is True
+
 
 

@@ -7,7 +7,7 @@ y el desglose analítico paso a paso idéntico al cuaderno de ejercicios (Imagen
 
 from __future__ import annotations
 
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 import numpy as np
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -512,17 +512,32 @@ class SidebarPanel(QWidget):
         self.spin_xmax.setValue(3.0)
         grid_cfg.addWidget(self.spin_xmax, 1, 3)
 
-        # Fila 2: Parámetros de evaluación Parte b (punto x y restricción de error)
-        grid_cfg.addWidget(QLabel("Evaluar en x:"), 2, 0)
+        in_layout.addLayout(grid_cfg)
+
+        # Checkbox para Opciones adicionales (Evaluación en punto y tolerancia de error)
+        self.chk_advanced = QCheckBox("Opciones adicionales")
+        self.chk_advanced.setChecked(False)
+        self.chk_advanced.setCursor(Qt.PointingHandCursor)
+        self.chk_advanced.setStyleSheet("font-size: 11px; font-weight: 600; color: #2563eb; margin-top: 2px;")
+        self.chk_advanced.toggled.connect(self._on_advanced_toggled)
+        in_layout.addWidget(self.chk_advanced)
+
+        # Contenedor desplegable para opciones adicionales
+        self.advanced_container = QWidget()
+        grid_adv = QGridLayout(self.advanced_container)
+        grid_adv.setContentsMargins(0, 2, 0, 2)
+        grid_adv.setSpacing(4)
+
+        grid_adv.addWidget(QLabel("Evaluar en x:"), 0, 0)
         self.spin_x_eval = QDoubleSpinBox()
         self.spin_x_eval.setRange(-1000.0, 1000.0)
         self.spin_x_eval.setDecimals(3)
         self.spin_x_eval.setSingleStep(0.05)
         self.spin_x_eval.setValue(1.25)
         self.spin_x_eval.valueChanged.connect(self._on_eval_param_changed)
-        grid_cfg.addWidget(self.spin_x_eval, 2, 1)
+        grid_adv.addWidget(self.spin_x_eval, 0, 1)
 
-        grid_cfg.addWidget(QLabel("Tolerancia error:"), 2, 2)
+        grid_adv.addWidget(QLabel("Tolerancia error:"), 0, 2)
         self.combo_tolerance = QComboBox()
         self.combo_tolerance.addItem("10⁻³ (0.001) [Pizarrón]", 0.001)
         self.combo_tolerance.addItem("10⁻⁴ (0.0001) [Pizarrón]", 0.0001)
@@ -530,9 +545,10 @@ class SidebarPanel(QWidget):
         self.combo_tolerance.addItem("10⁻⁵ (0.00001)", 0.00001)
         self.combo_tolerance.addItem("Sin límite", None)
         self.combo_tolerance.currentIndexChanged.connect(self._on_eval_param_changed)
-        grid_cfg.addWidget(self.combo_tolerance, 2, 3)
+        grid_adv.addWidget(self.combo_tolerance, 0, 3)
 
-        in_layout.addLayout(grid_cfg)
+        self.advanced_container.setVisible(False)
+        in_layout.addWidget(self.advanced_container)
 
         # Botón Resolver
         self.btn_solve = QPushButton("▶ Resolver Serie de Taylor")
@@ -620,7 +636,7 @@ class SidebarPanel(QWidget):
         f_box_layout.setContentsMargins(6, 6, 6, 6)
         f_box_layout.setSpacing(4)
 
-        lbl_f_title = QLabel("Fórmula de Taylor Construida (Parte a):")
+        lbl_f_title = QLabel("Fórmula de Taylor Construida:")
         lbl_f_title.setStyleSheet("font-weight: 700; font-size: 11px; color: #2563eb;")
         f_box_layout.addWidget(lbl_f_title)
 
@@ -668,11 +684,6 @@ class SidebarPanel(QWidget):
 
         self.steps_list_layout.addWidget(self.final_formula_box)
 
-        # Widget de convergencia del pizarrón para la Parte b en Paso a Paso
-        self.whiteboard_widget_steps = WhiteboardConvergenceWidget(is_dark_mode=self.is_dark_mode)
-        self.whiteboard_widget_steps.inspect_eval_point_requested.connect(self.inspect_eval_point_requested.emit)
-        self.steps_list_layout.addWidget(self.whiteboard_widget_steps)
-
         self.steps_list_layout.addStretch()
         self.scroll_steps.setWidget(self.steps_container)
         steps_layout.addWidget(self.scroll_steps)
@@ -705,14 +716,15 @@ class SidebarPanel(QWidget):
 
         self.tabs.addTab(self.tab_eval, "Evaluación (Parte b)")
 
+        # Ocultar pestaña de Evaluación a primera vista hasta activar "Opciones adicionales"
+        if hasattr(self.tabs, "setTabVisible"):
+            self.tabs.setTabVisible(2, False)
+
         main_layout.addWidget(self.tabs, stretch=1)
 
     def set_dark_mode(self, is_dark: bool):
         self.is_dark_mode = is_dark
         self._update_fx_preview(self.input_fx.text())
-        if hasattr(self, "whiteboard_widget_steps"):
-            self.whiteboard_widget_steps.is_dark_mode = is_dark
-            self.whiteboard_widget_steps.update_style()
         if hasattr(self, "whiteboard_widget_tab"):
             self.whiteboard_widget_tab.is_dark_mode = is_dark
             self.whiteboard_widget_tab.update_style()
@@ -773,14 +785,19 @@ class SidebarPanel(QWidget):
     def _on_eval_param_changed(self):
         self._update_evaluation_views()
 
+    def _on_advanced_toggled(self, checked: bool):
+        self.advanced_container.setVisible(checked)
+        if hasattr(self, "tabs") and hasattr(self.tabs, "setTabVisible"):
+            self.tabs.setTabVisible(2, checked)
+        if checked and self.result is not None:
+            self._update_evaluation_views()
+
     def _update_evaluation_views(self):
         if self.result is None:
             return
         x_eval = self.spin_x_eval.value()
         tol = self.get_selected_tolerance()
         eval_data = self.result.evaluate_point_iterations(x_eval, tolerance=tol)
-        if hasattr(self, "whiteboard_widget_steps"):
-            self.whiteboard_widget_steps.update_data(eval_data)
         if hasattr(self, "whiteboard_widget_tab"):
             self.whiteboard_widget_tab.update_data(eval_data)
 
@@ -861,8 +878,11 @@ class SidebarPanel(QWidget):
             self.lbl_final_expanded.setText(ltx_exp)
         self.lbl_final_expanded.setToolTip(ltx_exp)
 
-        # 4. Actualizar visualizaciones de la Parte b (Evaluación numérica y convergencia de error)
+        # 4. Actualizar visualización de la Parte b en su pestaña de Evaluación
         self._update_evaluation_views()
+        is_adv = self.chk_advanced.isChecked()
+        if hasattr(self, "tabs") and hasattr(self.tabs, "setTabVisible"):
+            self.tabs.setTabVisible(2, is_adv)
 
     def select_order(self, order: Optional[int]):
         self.selected_order = order
@@ -892,3 +912,7 @@ class SidebarPanel(QWidget):
             self.spin_x_eval.setValue(x_eval)
         if tolerance is not None:
             self.set_tolerance(tolerance)
+        if x_eval is not None or tolerance is not None:
+            self.chk_advanced.setChecked(True)
+        else:
+            self.chk_advanced.setChecked(False)
