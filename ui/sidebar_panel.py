@@ -711,31 +711,31 @@ class SidebarPanel(QWidget):
         in_layout.addWidget(self.lbl_preview_fx)
         self._update_fx_preview("x^4 - 3x^2 + 1")
 
-        # Fila compacta de Opciones y Resumen de Parámetros (Abre pop-up modal para ahorrar espacio vertical)
-        opts_row = QHBoxLayout()
-        opts_row.setContentsMargins(0, 2, 0, 2)
-        opts_row.setSpacing(6)
+        # Resumen informativo de parámetros actuales
+        self.lbl_options_summary = QLabel()
+        self.lbl_options_summary.setStyleSheet("font-size: 11px; font-weight: 600; color: #2563eb; padding: 1px 2px;")
+        self._update_options_summary()
+        in_layout.addWidget(self.lbl_options_summary)
+
+        # Fila con ambos botones al mismo nivel (mitad y mitad para cada uno)
+        buttons_row = QHBoxLayout()
+        buttons_row.setContentsMargins(0, 2, 0, 0)
+        buttons_row.setSpacing(6)
 
         self.btn_options = QPushButton("⚙ Opciones...")
         self.btn_options.setToolTip("Abrir ventana modal para configurar punto x₀, orden n, intervalo y opciones avanzadas")
-        self.btn_options.setFixedHeight(28)
+        self.btn_options.setFixedHeight(32)
         self.btn_options.setCursor(Qt.PointingHandCursor)
         self.btn_options.clicked.connect(self._open_options_dialog)
-        opts_row.addWidget(self.btn_options)
+        buttons_row.addWidget(self.btn_options, stretch=1)
 
-        self.lbl_options_summary = QLabel()
-        self.lbl_options_summary.setStyleSheet("font-size: 11px; font-weight: 600; color: #2563eb; padding-left: 4px;")
-        self._update_options_summary()
-        opts_row.addWidget(self.lbl_options_summary, stretch=1)
-
-        in_layout.addLayout(opts_row)
-
-        # Botón Resolver
         self.btn_solve = QPushButton("▶ Resolver Serie de Taylor")
         self.btn_solve.setProperty("class", "primary")
         self.btn_solve.setFixedHeight(32)
         self.btn_solve.clicked.connect(self._on_solve_clicked)
-        in_layout.addWidget(self.btn_solve)
+        buttons_row.addWidget(self.btn_solve, stretch=1)
+
+        in_layout.addLayout(buttons_row)
 
         main_layout.addWidget(input_box)
 
@@ -804,63 +804,40 @@ class SidebarPanel(QWidget):
         self.steps_items_layout.setSpacing(6)
         self.steps_list_layout.addLayout(self.steps_items_layout)
 
-        # Caja para la fórmula final construida (con scroll horizontal independiente)
+        # Tarjeta para la fórmula final construida (idéntica a las tarjetas de orden, sin scroll interno)
         self.final_formula_box = QFrame()
-        self.final_formula_box.setStyleSheet(
-            "background-color: #2563eb12; border: 1.5px solid #2563eb; border-radius: 6px; padding: 4px;"
-        )
-        self.final_formula_box.setMinimumWidth(380)
-        self.final_formula_box.setMaximumHeight(170)
+        self._update_final_formula_box_style()
 
         f_box_layout = QVBoxLayout(self.final_formula_box)
-        f_box_layout.setContentsMargins(6, 6, 6, 6)
+        f_box_layout.setContentsMargins(8, 6, 8, 8)
         f_box_layout.setSpacing(4)
 
-        #lbl_f_title = QLabel("Fórmula de Taylor Construida:")
-        #lbl_f_title.setStyleSheet("font-weight: 700; font-size: 11px; color: #2563eb;")
-        #f_box_layout.addWidget(lbl_f_title)
+        # Encabezado con badge distintivo
+        header_f = QHBoxLayout()
+        lbl_f_badge = QLabel(" Fórmula de Taylor Construida ")
+        lbl_f_badge.setStyleSheet(
+            "background-color: #2563eb; color: #ffffff; font-weight: bold; "
+            "font-size: 10px; border-radius: 3px; padding: 1px 4px;"
+        )
+        header_f.addWidget(lbl_f_badge)
+        header_f.addStretch()
+        f_box_layout.addLayout(header_f)
 
-        self.scroll_final = QScrollArea()
-        self.scroll_final.setWidgetResizable(True)
-        self.scroll_final.setFrameShape(QFrame.NoFrame)
-        self.scroll_final.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll_final.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.scroll_final.setStyleSheet("""
-            QScrollArea { background: transparent; border: none; }
-            QScrollBar:horizontal {
-                height: 6px;
-                background: rgba(0,0,0,0.06);
-                border-radius: 3px;
-                margin: 0px;
-            }
-            QScrollBar::handle:horizontal {
-                background: #3b82f6;
-                border-radius: 3px;
-                min-width: 25px;
-            }
-            QScrollBar::handle:horizontal:hover {
-                background: #2563eb;
-            }
-            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
-                width: 0px;
-            }
-        """)
-
-        final_inner = QWidget()
-        final_inner_layout = QVBoxLayout(final_inner)
-        final_inner_layout.setContentsMargins(0, 0, 0, 8)
-        final_inner_layout.setSpacing(4)
+        lbl_f_title = QLabel("Aproximación Polinomial:")
+        lbl_f_title.setStyleSheet("font-size: 10px; color: #64748b; font-weight: 600;")
+        f_box_layout.addWidget(lbl_f_title)
 
         self.lbl_final_taylor = QLabel()
         self.lbl_final_taylor.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        final_inner_layout.addWidget(self.lbl_final_taylor)
+        f_box_layout.addWidget(self.lbl_final_taylor)
+
+        lbl_exp_title = QLabel("Forma Expandida:")
+        lbl_exp_title.setStyleSheet("font-size: 10px; color: #64748b; font-weight: 600;")
+        f_box_layout.addWidget(lbl_exp_title)
 
         self.lbl_final_expanded = QLabel()
         self.lbl_final_expanded.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        final_inner_layout.addWidget(self.lbl_final_expanded)
-
-        self.scroll_final.setWidget(final_inner)
-        f_box_layout.addWidget(self.scroll_final)
+        f_box_layout.addWidget(self.lbl_final_expanded)
 
         self.steps_list_layout.addWidget(self.final_formula_box)
 
@@ -907,12 +884,22 @@ class SidebarPanel(QWidget):
         if hasattr(self, "options_dialog"):
             self.options_dialog.apply_theme(is_dark)
         self._update_options_summary()
+        self._update_final_formula_box_style()
         self._update_fx_preview(self.input_fx.text())
         if hasattr(self, "whiteboard_widget_tab"):
             self.whiteboard_widget_tab.is_dark_mode = is_dark
             self.whiteboard_widget_tab.update_style()
         if self.result:
             self.display_results(self.result)
+
+    def _update_final_formula_box_style(self):
+        bg = "#1e293b" if self.is_dark_mode else "#ffffff"
+        border = "#334155" if self.is_dark_mode else "#e2e8f0"
+        if hasattr(self, "final_formula_box"):
+            self.final_formula_box.setStyleSheet(
+                f"QFrame {{ background-color: {bg}; border: 1px solid {border}; "
+                f"border-left: 3px solid #2563eb; border-radius: 4px; }}"
+            )
 
     def _on_fx_text_changed(self, text: str):
         self._update_fx_preview(text)
