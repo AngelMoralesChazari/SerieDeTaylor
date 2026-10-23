@@ -90,6 +90,130 @@ class TaylorSeriesResult:
             return self.steps[-1].poly_expanded_sym
         return sp.Integer(0)
 
+    def evaluate_point_iterations(
+        self,
+        x_eval: float,
+        tolerance: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """
+        Calcula la evaluación de la Serie de Taylor punto a punto (Parte b del pizarrón):
+        Sustituye (x_eval - x0) en cada orden k, calculando:
+        - El valor acumulado P_k(x_eval)
+        - La fórmula de sustitución idéntica al pizarrón: ej. ln(1.25) = 0.25 - 1/2(0.25)^2 = 0.21875
+        - La diferencia sucesiva (término de error de Leibniz) Δ_k = P_k - P_{k-1}
+        - El error analítico real |f(x_eval) - P_k(x_eval)|
+        - Detección del orden exacto que cumple con la tolerancia (ej: orden 4 para < 10^-3).
+        """
+        try:
+            f_val = float(self.func_eval(x_eval))
+        except Exception:
+            f_val = float("nan")
+
+        dx = x_eval - self.x0
+        func_name = self.func_input.strip()
+        # Prefijo para la función evaluada, ej: \ln(1.25) o f(1.25)
+        if "ln" in func_name:
+            func_prefix = f"\\ln({x_eval:g})"
+        elif "log" in func_name:
+            func_prefix = f"\\log({x_eval:g})"
+        elif "exp" in func_name:
+            func_prefix = f"e^{{{x_eval:g}}}"
+        elif "sin" in func_name:
+            func_prefix = f"\\sin({x_eval:g})"
+        elif "cos" in func_name:
+            func_prefix = f"\\cos({x_eval:g})"
+        else:
+            func_prefix = f"f({x_eval:g})"
+
+        iterations_data = []
+        best_order_delta = None
+        best_order_true = None
+        prev_p_val = 0.0
+
+        for step in self.steps:
+            k = step.order
+            try:
+                p_val = float(step.eval_func(x_eval))
+            except Exception:
+                p_val = float("nan")
+
+            if k == 0:
+                prev_p_val = p_val
+                # Si f(x0) no es nulo, guardarlo como base
+                continue
+
+            diff_term = p_val - prev_p_val
+            abs_diff = abs(diff_term) if np.isfinite(diff_term) else float("nan")
+            err_abs = abs(f_val - p_val) if (np.isfinite(f_val) and np.isfinite(p_val)) else float("nan")
+
+            # Formatear la fórmula de sustitución idéntica a la pizarra
+            coeff_sym = step.coeff_sym
+
+            if k == 1:
+                if abs(prev_p_val) < 1e-12:
+                    formula_latex = f"{func_prefix} = ({x_eval:g} - {self.x0:g}) = {p_val:.6g}"
+                else:
+                    formula_latex = f"{func_prefix} = {prev_p_val:.6g} + ({x_eval:g} - {self.x0:g}) = {p_val:.6g}"
+            else:
+                op = "+" if diff_term >= 0 else "-"
+                abs_coeff = abs(coeff_sym)
+                c_ltx = sp.latex(abs_coeff)
+                dx_str = f"({abs(dx):g})^{{{k}}}" if k > 1 else f"({abs(dx):g})"
+                if abs_coeff == 1:
+                    term_str = dx_str
+                else:
+                    term_str = f"{c_ltx} {dx_str}"
+
+                formula_latex = f"{func_prefix} = {prev_p_val:.6g} {op} {term_str} = {p_val:.6g}"
+
+            meets_delta = False
+            meets_true = False
+            if tolerance is not None and tolerance > 0:
+                if np.isfinite(abs_diff) and abs_diff < tolerance:
+                    meets_delta = True
+                    if best_order_delta is None:
+                        best_order_delta = k
+
+                if np.isfinite(err_abs) and err_abs < tolerance:
+                    meets_true = True
+                    if best_order_true is None:
+                        best_order_true = k
+
+            iterations_data.append({
+                "order": k,
+                "p_val": p_val,
+                "prev_val": prev_p_val,
+                "diff_term": diff_term,
+                "abs_diff": abs_diff,
+                "err_abs": err_abs,
+                "formula_latex": formula_latex,
+                "meets_tolerance_delta": meets_delta,
+                "meets_tolerance_true": meets_true,
+                "meets_tolerance": meets_delta or meets_true
+            })
+
+            prev_p_val = p_val
+
+        # Criterio del pizarrón: cota del término de diferencia sucesiva Δ_k < tol
+        best_order = best_order_delta if best_order_delta is not None else best_order_true
+
+        return {
+            "x_eval": x_eval,
+            "x0": self.x0,
+            "dx": dx,
+            "f_val": f_val,
+            "func_prefix": func_prefix,
+            "tolerance": tolerance,
+            "iterations": iterations_data,
+            "best_order": best_order,
+            "best_order_delta": best_order_delta,
+            "best_order_true": best_order_true
+        }
+
+    # Alias compatible
+    evaluate_at_point = evaluate_point_iterations
+
+
 
 def format_term_latex(coeff: sp.Expr, k: int, x0_sym: sp.Expr) -> str:
     """

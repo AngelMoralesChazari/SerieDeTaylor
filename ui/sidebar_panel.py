@@ -12,7 +12,7 @@ import numpy as np
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QDoubleSpinBox, QSpinBox, QPushButton, QTabWidget,
-    QScrollArea, QFrame, QCheckBox, QMessageBox, QGridLayout
+    QScrollArea, QFrame, QCheckBox, QMessageBox, QGridLayout, QComboBox
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPixmap
@@ -222,6 +222,210 @@ class NotebookStepWidget(QFrame):
         parent_layout.addWidget(lbl_img)
 
 
+class WhiteboardConvergenceWidget(QFrame):
+    """
+    Despliegue visual de la Parte b) del Pizarrón:
+    - Evaluación iterativa de Taylor en x_eval (ej. ln(1.25))
+    - Sustitución término a término idéntica al pizarrón:
+      ln(1.25) = (1.25 - 1) = 0.25
+      ln(1.25) = 0.25 - 1/2(0.25)^2 = 0.21875
+      ln(1.25) = 0.21875 + 1/3(0.25)^3 = 0.223958
+      ln(1.25) = 0.223958 - 1/4(0.25)^4 = 0.222981  <-- Condición de error cumplida (Δ = 0.000977 < 10^-3)
+      ln(1.25) = 0.222981 + 1/5(0.25)^5 = 0.223177
+      ln(1.25) = 0.223177 - 1/6(0.25)^6 = 0.223136
+    - Columna de diferencias Δ_k entre órdenes sucesivos
+    - Resaltado en verde esmeralda del orden exacto que cumple con la condición de error
+    - Comparación con el valor exacto de la Calculadora: ln(1.25) = 0.223143
+    - Botón interactivo para trasladar la gráfica al punto x_eval
+    """
+    inspect_eval_point_requested = Signal(float)
+
+    def __init__(self, is_dark_mode: bool = False, parent=None):
+        super().__init__(parent)
+        self.is_dark_mode = is_dark_mode
+        self.eval_data: Optional[Dict[str, Any]] = None
+        self._setup_ui()
+
+    def _setup_ui(self):
+        self.layout_main = QVBoxLayout(self)
+        self.layout_main.setContentsMargins(6, 6, 6, 6)
+        self.layout_main.setSpacing(6)
+        self.update_style()
+
+    def update_style(self):
+        bg = "#182234" if self.is_dark_mode else "#f0fdf4"
+        border = "#059669" if self.is_dark_mode else "#10b981"
+        self.setStyleSheet(
+            f"WhiteboardConvergenceWidget {{"
+            f"  background-color: {bg};"
+            f"  border: 1.5px solid {border};"
+            f"  border-radius: 8px;"
+            f"}}"
+        )
+
+    def update_data(self, eval_data: Dict[str, Any]):
+        self.eval_data = eval_data
+        # Limpiar layout previo
+        while self.layout_main.count() > 0:
+            item = self.layout_main.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                sub = item.layout()
+                while sub.count() > 0:
+                    si = sub.takeAt(0)
+                    if si.widget():
+                        si.widget().deleteLater()
+
+        x_eval = eval_data["x_eval"]
+        x0 = eval_data["x0"]
+        dx = eval_data["dx"]
+        f_val = eval_data["f_val"]
+        func_prefix = eval_data["func_prefix"]
+        tol = eval_data["tolerance"]
+        iterations = eval_data["iterations"]
+        best_order = eval_data["best_order"]
+
+        txt_color = "#f8fafc" if self.is_dark_mode else "#0f172a"
+        muted_color = "#94a3b8" if self.is_dark_mode else "#64748b"
+
+        # 1. Encabezado de la Parte b
+        header_box = QFrame()
+        h_layout = QVBoxLayout(header_box)
+        h_layout.setContentsMargins(4, 4, 4, 4)
+        h_layout.setSpacing(2)
+
+        title_lbl = QLabel(f"Parte b) Evaluación de {func_prefix} e Iteraciones de Error")
+        title_lbl.setStyleSheet("font-weight: 800; font-size: 11.5px; color: #10b981;")
+        h_layout.addWidget(title_lbl)
+
+        tol_str = f"{tol:g}" if tol is not None else "Sin límite"
+        if tol == 0.001:
+            tol_str = "10⁻³ (0.001)"
+        elif tol == 0.0001:
+            tol_str = "10⁻⁴ (0.0001)"
+        elif tol == 0.01:
+            tol_str = "10⁻² (0.01)"
+
+        sub_lbl = QLabel(
+            f"Sustitución en potencias: (x - x₀) = ({x_eval:g} - {x0:g}) = {dx:g}  |  "
+            f"Tolerancia: < {tol_str}"
+        )
+        sub_lbl.setStyleSheet(f"font-size: 9.5px; color: {muted_color}; font-weight: 600;")
+        h_layout.addWidget(sub_lbl)
+        self.layout_main.addWidget(header_box)
+
+        # 2. Contenedor de iteraciones paso a paso
+        for it in iterations:
+            k = it["order"]
+            p_val = it["p_val"]
+            diff_term = it["diff_term"]
+            abs_diff = it["abs_diff"]
+            formula_ltx = it["formula_latex"]
+            is_best = (k == best_order)
+
+            card = QFrame()
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(6, 6, 6, 6)
+            card_layout.setSpacing(3)
+
+            # Estilo: si es el orden donde se cumple la condición de error -> borde verde y fondo sutil
+            if is_best:
+                c_bg = "#064e3b" if self.is_dark_mode else "#dcfce7"
+                c_border = "#10b981"
+                card.setStyleSheet(
+                    f"QFrame {{ background-color: {c_bg}; border: 2px solid {c_border}; border-radius: 6px; }}"
+                )
+            else:
+                c_bg = "#1e293b" if self.is_dark_mode else "#ffffff"
+                c_border = "#334155" if self.is_dark_mode else "#e2e8f0"
+                card.setStyleSheet(
+                    f"QFrame {{ background-color: {c_bg}; border: 1px solid {c_border}; border-radius: 6px; }}"
+                )
+
+            # Fila superior de la tarjeta: Badge de Orden y Badge de condición
+            top_row = QHBoxLayout()
+            lbl_k = QLabel(f" Orden {k} ")
+            lbl_k.setStyleSheet(
+                "background-color: #3b82f6; color: #ffffff; font-weight: bold; font-size: 9.5px; border-radius: 3px; padding: 1px 4px;"
+            )
+            top_row.addWidget(lbl_k)
+
+            if is_best:
+                lbl_badge_ok = QLabel(f" ✓ Condición Cumplida: |Δ| = {abs_diff:.6g} < {tol_str} ")
+                lbl_badge_ok.setStyleSheet(
+                    "background-color: #10b981; color: #ffffff; font-weight: bold; font-size: 9.5px; border-radius: 3px; padding: 1px 4px;"
+                )
+                top_row.addWidget(lbl_badge_ok)
+
+            top_row.addStretch()
+
+            # Diferencia sucesiva estilo pizarra
+            diff_str = f"Δ = {diff_term:+.6g}" if np.isfinite(diff_term) else ""
+            lbl_diff = QLabel(diff_str)
+            lbl_diff.setStyleSheet(
+                f"font-size: 9.5px; font-weight: 700; color: {'#10b981' if is_best else '#64748b'};"
+            )
+            top_row.addWidget(lbl_diff)
+
+            card_layout.addLayout(top_row)
+
+            # Render de la fórmula de sustitución en LaTeX
+            lbl_math = QLabel()
+            try:
+                px = GLOBAL_LATEX_RENDERER.render_to_pixmap(formula_ltx, font_size=9.5, color_hex=txt_color)
+                if not px.isNull():
+                    lbl_math.setPixmap(px)
+                else:
+                    lbl_math.setText(formula_ltx)
+            except Exception:
+                lbl_math.setText(formula_ltx)
+            lbl_math.setToolTip(formula_ltx)
+            card_layout.addWidget(lbl_math)
+
+            self.layout_main.addWidget(card)
+
+        # 3. Recuadro Comparativo con Calculadora
+        calc_box = QFrame()
+        calc_bg = "#0f172a" if self.is_dark_mode else "#f8fafc"
+        calc_border = "#3b82f6"
+        calc_box.setStyleSheet(
+            f"QFrame {{ background-color: {calc_bg}; border: 1.5px solid {calc_border}; border-radius: 6px; padding: 6px; }}"
+        )
+        c_box_layout = QVBoxLayout(calc_box)
+        c_box_layout.setContentsMargins(6, 6, 6, 6)
+        c_box_layout.setSpacing(4)
+
+        lbl_c_title = QLabel("📱 Comparación con Calculadora (Pizarrón):")
+        lbl_c_title.setStyleSheet("font-weight: 700; font-size: 11px; color: #3b82f6;")
+        c_box_layout.addWidget(lbl_c_title)
+
+        best_it = next((it for it in iterations if it["order"] == best_order), iterations[-1] if iterations else None)
+        best_p_val = best_it["p_val"] if best_it else float("nan")
+        best_err = best_it["err_abs"] if best_it else float("nan")
+
+        calc_lines = [
+            f"• Calculadora: {func_prefix} = {f_val:.6g}" if np.isfinite(f_val) else f"• Calculadora: {func_prefix} = Indefinido",
+            f"• Taylor (Orden {best_order if best_order else 'último'}): P({x_eval:g}) = {best_p_val:.6g}",
+            f"• Error analítico real: |f(x) - P(x)| = {best_err:.6e}" if np.isfinite(best_err) else ""
+        ]
+        calc_text = "\n".join([line for line in calc_lines if line])
+        lbl_c_details = QLabel(calc_text)
+        lbl_c_details.setStyleSheet(f"font-size: 9.5px; color: {txt_color}; font-family: monospace;")
+        c_box_layout.addWidget(lbl_c_details)
+
+        # Botón para trasladar la gráfica y ver el tooltip exacto
+        btn_inspect = QPushButton(f"🎯 Ver x = {x_eval:g} en la Gráfica")
+        btn_inspect.setStyleSheet(
+            "QPushButton { background-color: #3b82f6; color: #ffffff; border-radius: 4px; padding: 4px 8px; font-weight: 600; font-size: 10px; }"
+            "QPushButton:hover { background-color: #2563eb; }"
+        )
+        btn_inspect.clicked.connect(lambda: self.inspect_eval_point_requested.emit(x_eval))
+        c_box_layout.addWidget(btn_inspect)
+
+        self.layout_main.addWidget(calc_box)
+
+
 class SidebarPanel(QWidget):
     """
     Panel lateral ("Vista Álgebra"):
@@ -233,6 +437,7 @@ class SidebarPanel(QWidget):
     curve_visibility_changed = Signal(int, bool)
     func_visibility_changed = Signal(bool)
     order_selected = Signal(int)
+    inspect_eval_point_requested = Signal(float)
 
     def __init__(self, parent=None, is_dark_mode: bool = False):
         super().__init__(parent)
@@ -274,11 +479,11 @@ class SidebarPanel(QWidget):
         in_layout.addWidget(self.lbl_preview_fx)
         self._update_fx_preview("x^4 - 3x^2 + 1")
 
-        # Configuración de x0, intervalo [x_min, x_max] y orden n
+        # Configuración de x0, intervalo [x_min, x_max], orden n y parámetros de evaluación Parte b
         grid_cfg = QGridLayout()
         grid_cfg.setSpacing(4)
 
-        # Punto de expansión x0 (Punto a)
+        # Fila 0: Punto de expansión x0 (Punto a) y Orden máximo n
         grid_cfg.addWidget(QLabel("Punto x₀ (a):"), 0, 0)
         self.spin_x0 = QDoubleSpinBox()
         self.spin_x0.setRange(-1000.0, 1000.0)
@@ -286,14 +491,13 @@ class SidebarPanel(QWidget):
         self.spin_x0.setValue(1.0)
         grid_cfg.addWidget(self.spin_x0, 0, 1)
 
-        # Orden máximo n
         grid_cfg.addWidget(QLabel("Orden máx (n):"), 0, 2)
         self.spin_order = QSpinBox()
         self.spin_order.setRange(0, 12)
         self.spin_order.setValue(4)
         grid_cfg.addWidget(self.spin_order, 0, 3)
 
-        # Intervalo [x_min, x_max]
+        # Fila 1: Intervalo [x_min, x_max]
         grid_cfg.addWidget(QLabel("Intervalo de:"), 1, 0)
         self.spin_xmin = QDoubleSpinBox()
         self.spin_xmin.setRange(-1000.0, 1000.0)
@@ -307,6 +511,26 @@ class SidebarPanel(QWidget):
         self.spin_xmax.setDecimals(2)
         self.spin_xmax.setValue(3.0)
         grid_cfg.addWidget(self.spin_xmax, 1, 3)
+
+        # Fila 2: Parámetros de evaluación Parte b (punto x y restricción de error)
+        grid_cfg.addWidget(QLabel("Evaluar en x:"), 2, 0)
+        self.spin_x_eval = QDoubleSpinBox()
+        self.spin_x_eval.setRange(-1000.0, 1000.0)
+        self.spin_x_eval.setDecimals(3)
+        self.spin_x_eval.setSingleStep(0.05)
+        self.spin_x_eval.setValue(1.25)
+        self.spin_x_eval.valueChanged.connect(self._on_eval_param_changed)
+        grid_cfg.addWidget(self.spin_x_eval, 2, 1)
+
+        grid_cfg.addWidget(QLabel("Tolerancia error:"), 2, 2)
+        self.combo_tolerance = QComboBox()
+        self.combo_tolerance.addItem("10⁻³ (0.001) [Pizarrón]", 0.001)
+        self.combo_tolerance.addItem("10⁻⁴ (0.0001) [Pizarrón]", 0.0001)
+        self.combo_tolerance.addItem("10⁻² (0.01)", 0.01)
+        self.combo_tolerance.addItem("10⁻⁵ (0.00001)", 0.00001)
+        self.combo_tolerance.addItem("Sin límite", None)
+        self.combo_tolerance.currentIndexChanged.connect(self._on_eval_param_changed)
+        grid_cfg.addWidget(self.combo_tolerance, 2, 3)
 
         in_layout.addLayout(grid_cfg)
 
@@ -327,7 +551,6 @@ class SidebarPanel(QWidget):
         alg_layout = QVBoxLayout(self.tab_algebra)
         alg_layout.setContentsMargins(4, 4, 4, 4)
 
-        # Estilo sobrio y delgado para barras de desplazamiento horizontales
         slim_scroll_style = """
             QScrollArea { background: transparent; border: none; }
             QScrollBar:horizontal {
@@ -364,7 +587,7 @@ class SidebarPanel(QWidget):
 
         self.tabs.addTab(self.tab_algebra, "Álgebra")
 
-        # Pestaña 2: Desarrollo Paso a Paso (como en la libreta, Imagen 4)
+        # Pestaña 2: Desarrollo Paso a Paso (como en la libreta y pizarrón, Parte a + Parte b)
         self.tab_steps = QWidget()
         steps_layout = QVBoxLayout(self.tab_steps)
         steps_layout.setContentsMargins(4, 4, 4, 4)
@@ -376,30 +599,28 @@ class SidebarPanel(QWidget):
         self.scroll_steps.setStyleSheet(slim_scroll_style)
         self.steps_container = QWidget()
         self.steps_list_layout = QVBoxLayout(self.steps_container)
-        # Padding inferior de 20px para que el scroll horizontal nunca tape el último paso
-        self.steps_list_layout.setContentsMargins(0, 0, 0, 20)
-        self.steps_list_layout.setSpacing(6)
-        self.steps_list_layout.addStretch()
-        self.scroll_steps.setWidget(self.steps_container)
-        steps_layout.addWidget(self.scroll_steps)
+        self.steps_list_layout.setContentsMargins(0, 0, 0, 24)
+        self.steps_list_layout.setSpacing(8)
 
-        # Caja para la fórmula final construida (con scroll horizontal independiente para visualizarla completa)
+        # Sub-layout exclusivo para los widgets de cada orden de derivación (Parte a)
+        self.steps_items_layout = QVBoxLayout()
+        self.steps_items_layout.setContentsMargins(0, 0, 0, 0)
+        self.steps_items_layout.setSpacing(6)
+        self.steps_list_layout.addLayout(self.steps_items_layout)
+
+        # Caja para la fórmula final construida (con scroll horizontal independiente)
         self.final_formula_box = QFrame()
         self.final_formula_box.setStyleSheet(
             "background-color: #2563eb12; border: 1.5px solid #2563eb; border-radius: 6px; padding: 4px;"
         )
-
-        # --- AJUSTE DEL TAMAÑO DEL RECUADRO ---
-        # Modifica este valor para cambiar el ancho (ej. 350 para menos ancho, 450 para más ancho):
         self.final_formula_box.setMinimumWidth(380)
-        # Modifica este valor para cambiar la altura vertical (ej. 110 más compacto, 140 más alto):
         self.final_formula_box.setMaximumHeight(170)
 
         f_box_layout = QVBoxLayout(self.final_formula_box)
         f_box_layout.setContentsMargins(6, 6, 6, 6)
         f_box_layout.setSpacing(4)
 
-        lbl_f_title = QLabel("Fórmula de Taylor Construida:")
+        lbl_f_title = QLabel("Fórmula de Taylor Construida (Parte a):")
         lbl_f_title.setStyleSheet("font-weight: 700; font-size: 11px; color: #2563eb;")
         f_box_layout.addWidget(lbl_f_title)
 
@@ -445,15 +666,56 @@ class SidebarPanel(QWidget):
         self.scroll_final.setWidget(final_inner)
         f_box_layout.addWidget(self.scroll_final)
 
-        steps_layout.addWidget(self.final_formula_box)
+        self.steps_list_layout.addWidget(self.final_formula_box)
+
+        # Widget de convergencia del pizarrón para la Parte b en Paso a Paso
+        self.whiteboard_widget_steps = WhiteboardConvergenceWidget(is_dark_mode=self.is_dark_mode)
+        self.whiteboard_widget_steps.inspect_eval_point_requested.connect(self.inspect_eval_point_requested.emit)
+        self.steps_list_layout.addWidget(self.whiteboard_widget_steps)
+
+        self.steps_list_layout.addStretch()
+        self.scroll_steps.setWidget(self.steps_container)
+        steps_layout.addWidget(self.scroll_steps)
 
         self.tabs.addTab(self.tab_steps, "Paso a Paso")
+
+        # Pestaña 3: Vista dedicada exclusiva de Evaluación y Convergencia (Parte b)
+        self.tab_eval = QWidget()
+        eval_layout = QVBoxLayout(self.tab_eval)
+        eval_layout.setContentsMargins(4, 4, 4, 4)
+
+        self.scroll_eval = QScrollArea()
+        self.scroll_eval.setWidgetResizable(True)
+        self.scroll_eval.setFrameShape(QFrame.NoFrame)
+        self.scroll_eval.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll_eval.setStyleSheet(slim_scroll_style)
+
+        eval_container = QWidget()
+        eval_container_layout = QVBoxLayout(eval_container)
+        eval_container_layout.setContentsMargins(0, 0, 0, 20)
+        eval_container_layout.setSpacing(6)
+
+        self.whiteboard_widget_tab = WhiteboardConvergenceWidget(is_dark_mode=self.is_dark_mode)
+        self.whiteboard_widget_tab.inspect_eval_point_requested.connect(self.inspect_eval_point_requested.emit)
+        eval_container_layout.addWidget(self.whiteboard_widget_tab)
+        eval_container_layout.addStretch()
+
+        self.scroll_eval.setWidget(eval_container)
+        eval_layout.addWidget(self.scroll_eval)
+
+        self.tabs.addTab(self.tab_eval, "Evaluación (Parte b)")
 
         main_layout.addWidget(self.tabs, stretch=1)
 
     def set_dark_mode(self, is_dark: bool):
         self.is_dark_mode = is_dark
         self._update_fx_preview(self.input_fx.text())
+        if hasattr(self, "whiteboard_widget_steps"):
+            self.whiteboard_widget_steps.is_dark_mode = is_dark
+            self.whiteboard_widget_steps.update_style()
+        if hasattr(self, "whiteboard_widget_tab"):
+            self.whiteboard_widget_tab.is_dark_mode = is_dark
+            self.whiteboard_widget_tab.update_style()
         if self.result:
             self.display_results(self.result)
 
@@ -495,6 +757,33 @@ class SidebarPanel(QWidget):
 
         self.solve_requested.emit(func_str, x0, x_min, x_max, order)
 
+    def get_selected_tolerance(self) -> Optional[float]:
+        return self.combo_tolerance.currentData()
+
+    def set_tolerance(self, tol: Optional[float]):
+        if tol is None:
+            self.combo_tolerance.setCurrentIndex(self.combo_tolerance.count() - 1)
+            return
+        for idx in range(self.combo_tolerance.count()):
+            val = self.combo_tolerance.itemData(idx)
+            if val is not None and abs(val - tol) < 1e-9:
+                self.combo_tolerance.setCurrentIndex(idx)
+                return
+
+    def _on_eval_param_changed(self):
+        self._update_evaluation_views()
+
+    def _update_evaluation_views(self):
+        if self.result is None:
+            return
+        x_eval = self.spin_x_eval.value()
+        tol = self.get_selected_tolerance()
+        eval_data = self.result.evaluate_point_iterations(x_eval, tolerance=tol)
+        if hasattr(self, "whiteboard_widget_steps"):
+            self.whiteboard_widget_steps.update_data(eval_data)
+        if hasattr(self, "whiteboard_widget_tab"):
+            self.whiteboard_widget_tab.update_data(eval_data)
+
     def _clear_lists(self):
         while self.alg_list_layout.count() > 1:
             item = self.alg_list_layout.takeAt(0)
@@ -502,8 +791,8 @@ class SidebarPanel(QWidget):
                 item.widget().deleteLater()
         self.cards_map.clear()
 
-        while self.steps_list_layout.count() > 1:
-            item = self.steps_list_layout.takeAt(0)
+        while self.steps_items_layout.count() > 0:
+            item = self.steps_items_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
@@ -527,7 +816,7 @@ class SidebarPanel(QWidget):
         self.cards_map[-1] = card_f
         self.alg_list_layout.insertWidget(0, card_f)
 
-        # 2. Tarjetas para cada polinomio P_k(x) en la Vista Álgebra
+        # 2. Tarjetas para cada polinomio P_k(x) en la Vista Álgebra y Paso a Paso
         for idx, step in enumerate(result.steps):
             k = step.order
             color_hex = TAYLOR_PALETTE[k % len(TAYLOR_PALETTE)]
@@ -551,7 +840,7 @@ class SidebarPanel(QWidget):
                 x0_val=result.x0,
                 is_dark_mode=self.is_dark_mode
             )
-            self.steps_list_layout.insertWidget(idx, step_widget)
+            self.steps_items_layout.addWidget(step_widget)
 
         # 3. Mostrar la fórmula final construida (idéntica al final de la Imagen 4)
         txt_color = "#f8fafc" if self.is_dark_mode else "#0f172a"
@@ -572,6 +861,9 @@ class SidebarPanel(QWidget):
             self.lbl_final_expanded.setText(ltx_exp)
         self.lbl_final_expanded.setToolTip(ltx_exp)
 
+        # 4. Actualizar visualizaciones de la Parte b (Evaluación numérica y convergencia de error)
+        self._update_evaluation_views()
+
     def select_order(self, order: Optional[int]):
         self.selected_order = order
         for k, card in self.cards_map.items():
@@ -581,9 +873,22 @@ class SidebarPanel(QWidget):
         self.select_order(order)
         self.order_selected.emit(order)
 
-    def set_inputs(self, func_str: str, x0: float, x_min: float, x_max: float, order: int):
+    def set_inputs(
+        self,
+        func_str: str,
+        x0: float,
+        x_min: float,
+        x_max: float,
+        order: int,
+        x_eval: Optional[float] = None,
+        tolerance: Optional[float] = None
+    ):
         self.input_fx.setText(func_str)
         self.spin_x0.setValue(x0)
         self.spin_xmin.setValue(x_min)
         self.spin_xmax.setValue(x_max)
         self.spin_order.setValue(order)
+        if x_eval is not None:
+            self.spin_x_eval.setValue(x_eval)
+        if tolerance is not None:
+            self.set_tolerance(tolerance)

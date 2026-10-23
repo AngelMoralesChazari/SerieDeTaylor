@@ -126,6 +126,7 @@ class MainWindow(QMainWindow):
 
         self.combo_presets = QComboBox()
         self.combo_presets.addItem("Seleccionar ejercicio...", None)
+        self.combo_presets.addItem("📋 Pizarrón: ln(x), x₀ = 1, eval ln(1.25) con error < 10⁻³", ("ln(x)", 1.0, 0.2, 2.5, 6, 1.25, 0.001))
         self.combo_presets.addItem("Ejercicio a) x⁴ - 3x² + 1,  x₀ = 1", ("x^4 - 3x^2 + 1", 1.0, -2.5, 2.5, 4))
         self.combo_presets.addItem("Ejercicio b) x² + x + 1,  x₀ = 1", ("x^2 + x + 1", 1.0, -2.0, 3.0, 2))
         self.combo_presets.addItem("Ejercicio c) 2x³ - 3x² + 6x + 2,  x₀ = 1", ("2x^3 - 3x^2 + 6x + 2", 1.0, -2.0, 3.0, 3))
@@ -172,6 +173,9 @@ class MainWindow(QMainWindow):
         self.sidebar.curve_visibility_changed.connect(self.canvas.set_curve_visibility)
         self.sidebar.func_visibility_changed.connect(self.canvas.set_func_visibility)
         self.sidebar.order_selected.connect(self._on_order_selected)
+        self.sidebar.inspect_eval_point_requested.connect(
+            lambda x_val: self.canvas.show_exact_intersection_point(x_val)
+        )
 
         self.canvas.point_inspected.connect(self._on_point_inspected)
 
@@ -198,8 +202,12 @@ class MainWindow(QMainWindow):
     def _on_preset_selected(self, index: int):
         data = self.combo_presets.currentData()
         if data:
-            func_str, x0, x_min, x_max, order = data
-            self.sidebar.set_inputs(func_str, x0, x_min, x_max, order)
+            if len(data) == 5:
+                func_str, x0, x_min, x_max, order = data
+                x_eval, tol = 1.25, 0.001
+            else:
+                func_str, x0, x_min, x_max, order, x_eval, tol = data
+            self.sidebar.set_inputs(func_str, x0, x_min, x_max, order, x_eval=x_eval, tolerance=tol)
             self.solve_series(func_str, x0, x_min, x_max, order)
 
     def solve_series(
