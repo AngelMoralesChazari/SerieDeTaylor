@@ -114,3 +114,41 @@ def test_show_exact_intersection_point(qapp):
     assert "P_4(x) = -1" in text
     assert "Error = 0" in text or "0.00" in text
 
+
+def test_curves_dynamic_extension_on_zoom_out(qapp):
+    """
+    Verifica que al hacer zoom out las funciones no se corten en el lienzo (estilo GeoGebra),
+    sino que se recalculen y extiendan dinámicamente cubriendo todo el nuevo viewport visible.
+    """
+    engine = TaylorEngine()
+    res = engine.compute_series("ln(x)", x0=2.0, x_min=0.5, x_max=5.0, max_order=4)
+
+    canvas = GeoGebraCartesianCanvas()
+    canvas.update_data(res)
+
+    initial_xlim = canvas.ax.get_xlim()
+
+    # Aplicar zoom out significativo (factor 3.5)
+    canvas.zoom(3.5)
+    zoomed_xlim = canvas.ax.get_xlim()
+    assert zoomed_xlim[0] < initial_xlim[0]
+    assert zoomed_xlim[1] > initial_xlim[1]
+
+    # Verificar que los datos de f(x) y polinomios cubren ampliamente el nuevo viewport
+    xdata_f = canvas.line_func.get_xdata()
+    assert xdata_f[0] <= zoomed_xlim[0], "f(x) debe extenderse a la izquierda del viewport visible"
+    assert xdata_f[-1] >= zoomed_xlim[1], "f(x) debe extenderse a la derecha del viewport visible"
+
+    for k, line in canvas.lines_poly.items():
+        xdata_p = line.get_xdata()
+        assert xdata_p[0] <= zoomed_xlim[0], f"P_{k}(x) debe cubrir el margen izquierdo"
+        assert xdata_p[-1] >= zoomed_xlim[1], f"P_{k}(x) debe cubrir el margen derecho"
+
+    # Verificar que al desplazarse (pan) también se adaptan
+    canvas.pan_by(2.0, 0.0)
+    panned_xlim = canvas.ax.get_xlim()
+    xdata_panned = canvas.lines_poly[4].get_xdata()
+    assert xdata_panned[0] <= panned_xlim[0]
+    assert xdata_panned[-1] >= panned_xlim[1]
+
+

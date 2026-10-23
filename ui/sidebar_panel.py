@@ -295,7 +295,8 @@ class WhiteboardConvergenceWidget(QFrame):
         h_layout.setContentsMargins(4, 4, 4, 4)
         h_layout.setSpacing(2)
 
-        title_lbl = QLabel(f"Parte b) Evaluación de {func_prefix} e Iteraciones de Error")
+        clean_prefix = func_prefix.replace("\\", "")
+        title_lbl = QLabel(f"Parte b) Evaluación de {clean_prefix} e Iteraciones de Error")
         title_lbl.setStyleSheet("font-weight: 800; font-size: 11.5px; color: #10b981;")
         h_layout.addWidget(title_lbl)
 
@@ -319,6 +320,7 @@ class WhiteboardConvergenceWidget(QFrame):
         for it in iterations:
             k = it["order"]
             p_val = it["p_val"]
+            prev_val = it.get("prev_val", 0.0)
             diff_term = it["diff_term"]
             abs_diff = it["abs_diff"]
             formula_ltx = it["formula_latex"]
@@ -326,8 +328,8 @@ class WhiteboardConvergenceWidget(QFrame):
 
             card = QFrame()
             card_layout = QVBoxLayout(card)
-            card_layout.setContentsMargins(6, 6, 6, 6)
-            card_layout.setSpacing(3)
+            card_layout.setContentsMargins(8, 8, 8, 8)
+            card_layout.setSpacing(5)
 
             # Estilo: si es el orden donde se cumple la condición de error -> borde verde y fondo sutil
             if is_best:
@@ -343,31 +345,22 @@ class WhiteboardConvergenceWidget(QFrame):
                     f"QFrame {{ background-color: {c_bg}; border: 1px solid {c_border}; border-radius: 6px; }}"
                 )
 
-            # Fila superior de la tarjeta: Badge de Orden y Badge de condición
+            # Fila superior de la tarjeta: Badge de Orden y si cumple, badge verde
             top_row = QHBoxLayout()
             lbl_k = QLabel(f" Orden {k} ")
             lbl_k.setStyleSheet(
-                "background-color: #3b82f6; color: #ffffff; font-weight: bold; font-size: 9.5px; border-radius: 3px; padding: 1px 4px;"
+                "background-color: #3b82f6; color: #ffffff; font-weight: bold; font-size: 10px; border-radius: 3px; padding: 2px 6px;"
             )
             top_row.addWidget(lbl_k)
 
             if is_best:
-                lbl_badge_ok = QLabel(f" ✓ Condición Cumplida: |Δ| = {abs_diff:.6g} < {tol_str} ")
+                lbl_badge_ok = QLabel(f" ✓ Condición Cumplida: |Resta| < {tol_str} ")
                 lbl_badge_ok.setStyleSheet(
-                    "background-color: #10b981; color: #ffffff; font-weight: bold; font-size: 9.5px; border-radius: 3px; padding: 1px 4px;"
+                    "background-color: #10b981; color: #ffffff; font-weight: bold; font-size: 10px; border-radius: 3px; padding: 2px 6px;"
                 )
                 top_row.addWidget(lbl_badge_ok)
 
             top_row.addStretch()
-
-            # Diferencia sucesiva estilo pizarra
-            diff_str = f"Δ = {diff_term:+.6g}" if np.isfinite(diff_term) else ""
-            lbl_diff = QLabel(diff_str)
-            lbl_diff.setStyleSheet(
-                f"font-size: 9.5px; font-weight: 700; color: {'#10b981' if is_best else '#64748b'};"
-            )
-            top_row.addWidget(lbl_diff)
-
             card_layout.addLayout(top_row)
 
             # Render de la fórmula de sustitución en LaTeX
@@ -383,47 +376,45 @@ class WhiteboardConvergenceWidget(QFrame):
             lbl_math.setToolTip(formula_ltx)
             card_layout.addWidget(lbl_math)
 
+            # Fila prominente con el resultado visual de la resta
+            sub_frame = QFrame()
+            if k == 1:
+                sub_bg = "#334155" if self.is_dark_mode else "#f1f5f9"
+                sub_border = "#475569" if self.is_dark_mode else "#e2e8f0"
+                sub_fg = txt_color
+                resta_text = f"Valor base: P₁({x_eval:g}) = {p_val:.6g}"
+            else:
+                if is_best:
+                    sub_bg = "#047857" if self.is_dark_mode else "#bbf7d0"
+                    sub_border = "#10b981"
+                    sub_fg = "#ffffff" if self.is_dark_mode else "#14532d"
+                    resta_text = f"Resta: |{p_val:.6g} - {prev_val:.6g}| = {abs_diff:.6g}   (< {tol_str}  ✓ ¡Cumple condición!)"
+                else:
+                    sub_bg = "#1e293b" if self.is_dark_mode else "#f8fafc"
+                    sub_border = "#475569" if self.is_dark_mode else "#cbd5e1"
+                    sub_fg = "#cbd5e1" if self.is_dark_mode else "#334155"
+                    resta_text = f"Resta: |{p_val:.6g} - {prev_val:.6g}| = {abs_diff:.6g}"
+
+            sub_frame.setStyleSheet(
+                f"background-color: {sub_bg}; border: 1px solid {sub_border}; border-radius: 4px;"
+            )
+            sub_layout = QHBoxLayout(sub_frame)
+            sub_layout.setContentsMargins(8, 4, 8, 4)
+            lbl_sub = QLabel(resta_text)
+            lbl_sub.setStyleSheet(f"font-size: 10.5px; font-weight: 700; color: {sub_fg};")
+            sub_layout.addWidget(lbl_sub)
+            card_layout.addWidget(sub_frame)
+
             self.layout_main.addWidget(card)
 
-        # 3. Recuadro Comparativo con Calculadora
-        calc_box = QFrame()
-        calc_bg = "#0f172a" if self.is_dark_mode else "#f8fafc"
-        calc_border = "#3b82f6"
-        calc_box.setStyleSheet(
-            f"QFrame {{ background-color: {calc_bg}; border: 1.5px solid {calc_border}; border-radius: 6px; padding: 6px; }}"
-        )
-        c_box_layout = QVBoxLayout(calc_box)
-        c_box_layout.setContentsMargins(6, 6, 6, 6)
-        c_box_layout.setSpacing(4)
-
-        lbl_c_title = QLabel("📱 Comparación con Calculadora (Pizarrón):")
-        lbl_c_title.setStyleSheet("font-weight: 700; font-size: 11px; color: #3b82f6;")
-        c_box_layout.addWidget(lbl_c_title)
-
-        best_it = next((it for it in iterations if it["order"] == best_order), iterations[-1] if iterations else None)
-        best_p_val = best_it["p_val"] if best_it else float("nan")
-        best_err = best_it["err_abs"] if best_it else float("nan")
-
-        calc_lines = [
-            f"• Calculadora: {func_prefix} = {f_val:.6g}" if np.isfinite(f_val) else f"• Calculadora: {func_prefix} = Indefinido",
-            f"• Taylor (Orden {best_order if best_order else 'último'}): P({x_eval:g}) = {best_p_val:.6g}",
-            f"• Error analítico real: |f(x) - P(x)| = {best_err:.6e}" if np.isfinite(best_err) else ""
-        ]
-        calc_text = "\n".join([line for line in calc_lines if line])
-        lbl_c_details = QLabel(calc_text)
-        lbl_c_details.setStyleSheet(f"font-size: 9.5px; color: {txt_color}; font-family: monospace;")
-        c_box_layout.addWidget(lbl_c_details)
-
-        # Botón para trasladar la gráfica y ver el tooltip exacto
-        btn_inspect = QPushButton(f"🎯 Ver x = {x_eval:g} en la Gráfica")
+        # Botón para trasladar la vista de la gráfica al punto inspeccionado
+        btn_inspect = QPushButton(f"🎯 Ver punto x = {x_eval:g} en la Gráfica")
         btn_inspect.setStyleSheet(
-            "QPushButton { background-color: #3b82f6; color: #ffffff; border-radius: 4px; padding: 4px 8px; font-weight: 600; font-size: 10px; }"
-            "QPushButton:hover { background-color: #2563eb; }"
+            "QPushButton { background-color: #2563eb; color: #ffffff; border-radius: 5px; padding: 6px 12px; font-weight: 700; font-size: 11px; margin-top: 4px; }"
+            "QPushButton:hover { background-color: #1d4ed8; }"
         )
         btn_inspect.clicked.connect(lambda: self.inspect_eval_point_requested.emit(x_eval))
-        c_box_layout.addWidget(btn_inspect)
-
-        self.layout_main.addWidget(calc_box)
+        self.layout_main.addWidget(btn_inspect)
 
 
 class SidebarPanel(QWidget):
@@ -448,6 +439,10 @@ class SidebarPanel(QWidget):
         self.selected_order: Optional[int] = None
 
         self._init_ui()
+
+    def sizeHint(self):
+        from PySide6.QtCore import QSize
+        return QSize(540, 800)
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)

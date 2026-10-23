@@ -168,14 +168,16 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         self.x0_line = None
         self.tooltip_annotation = None
 
-        # Variables de control para arrastre fluido (pan)
+        # Variables de control para arrastre fluido (pan) y extensión dinámica estilo GeoGebra
         self._is_panning = False
         self._press_coord: Optional[Tuple[float, float]] = None
         self._press_xlim: Optional[Tuple[float, float]] = None
         self._press_ylim: Optional[Tuple[float, float]] = None
         self._has_dragged = False
+        self._updating_curves = False
 
         self._setup_style()
+        self._xlim_cid = self.ax.callbacks.connect("xlim_changed", self._on_xlim_changed)
 
         # Botonera flotante en la esquina superior derecha
         self.floating_nav = GraphFloatingNavWidget(self, is_dark_mode=self.is_dark_mode, parent=self)
@@ -254,6 +256,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         """Redibuja completamente el plano cartesiano."""
         self.ax.clear()
         self._setup_style()
+        self._xlim_cid = self.ax.callbacks.connect("xlim_changed", self._on_xlim_changed)
         self.lines_poly.clear()
         self.line_func = None
         self.tooltip_annotation = None
@@ -342,6 +345,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
             for text in legend.get_texts():
                 text.set_color("#f4f4f5" if self.is_dark_mode else "#0f172a")
 
+        self._refresh_curve_data(force=True)
         self.draw()
 
     def auto_fit_view(self):
@@ -407,7 +411,78 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
         dx = max(res.x_max - res.x_min, 1.0)
         self.ax.set_xlim(res.x_min - 0.05 * dx, res.x_max + 0.05 * dx)
+        self._refresh_curve_data(force=True)
         self.draw_idle()
+
+    def _on_xlim_changed(self, event_ax=None):
+        """Callback invocado por Matplotlib cuando cambian los límites horizontales (zoom, pan, etc.)."""
+        if self._updating_curves or self.taylor_result is None:
+            return
+        self._refresh_curve_data()
+
+    def _refresh_curve_data(self, force: bool = False):
+        """
+        Evalúa y extiende dinámicamente las curvas sobre el viewport visible actual (más margen).
+        Comportamiento idéntico a GeoGebra:
+        - Al hacer zoom out, las curvas no se cortan y continúan dibujándose en todo el rango visible.
+        - Al hacer zoom in, se recalculan para mantener una resolución suave y continua.
+        - Al desplazarse (pan), el margen pre-calculado evita parpadeos o cortes en los bordes.
+        """
+        if self.taylor_result is None or self._updating_curves:
+            return
+
+        cur_xlim = self.ax.get_xlim()
+        x_vis_min = float(min(cur_xlim[0], cur_xlim[1]))
+        x_vis_max = float(max(cur_xlim[0], cur_xlim[1]))
+        span = x_vis_max - x_vis_min
+        if not np.isfinite(span) or span <= 1e-9:
+            return
+
+        # Comprobar si la malla actual ya cubre ampliamente la vista con buena resolución
+        if not force and self.x_grid is not None and len(self.x_grid) >= 300:
+            grid_min = float(self.x_grid[0])
+            grid_max = float(self.x_grid[-1])
+            # Si el área visible está bien cubierta con al menos 20% de margen a cada lado
+            if grid_min <= (x_vis_min - 0.20 * span) and grid_max >= (x_vis_max + 0.20 * span):
+                pts_in_view = int(np.count_nonzero((self.x_grid >= x_vis_min) & (self.x_grid <= x_vis_max)))
+                # Y tiene entre 250 y 1500 puntos en pantalla para garantizar suavidad sin exceso
+                if 250 <= pts_in_view <= 1500:
+                    return
+
+        self._updating_curves = True
+        try:
+            # Margen del 80% fuera de la pantalla para permitir arrastres fluidos sin ver cortes
+            pad = max(span * 0.8, 1.0)
+            x_start = x_vis_min - pad
+            x_end = x_vis_max + pad
+
+            resolution = 1000
+            new_x = np.linspace(x_start, x_end, resolution)
+            res = self.taylor_result
+
+            try:
+                raw_y = res.func_eval(new_x)
+                new_y = clean_asymptotes(new_x, raw_y)
+            except Exception:
+                new_y = np.full_like(new_x, np.nan)
+
+            self.x_grid = new_x
+            self.y_true = new_y
+
+            if self.line_func is not None:
+                self.line_func.set_data(new_x, new_y)
+
+            for k, line in self.lines_poly.items():
+                step = res.get_step(k)
+                if step is not None:
+                    try:
+                        raw_yp = step.eval_func(new_x)
+                        yp = clean_asymptotes(new_x, raw_yp)
+                    except Exception:
+                        yp = np.full_like(new_x, np.nan)
+                    line.set_data(new_x, yp)
+        finally:
+            self._updating_curves = False
 
     def zoom(self, factor: float):
         """Aplica zoom centrado en el centro del viewport actual."""
@@ -419,6 +494,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         new_h = (cur_ylim[1] - cur_ylim[0]) * factor
         self.ax.set_xlim(cx - new_w / 2.0, cx + new_w / 2.0)
         self.ax.set_ylim(cy - new_h / 2.0, cy + new_h / 2.0)
+        self._refresh_curve_data()
         self.draw_idle()
 
     def show_exact_intersection_point(self, x_val: Optional[Union[float, bool]] = None):
@@ -450,6 +526,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         h = cur_ylim[1] - cur_ylim[0]
         self.ax.set_xlim(target_x - w / 2.0, target_x + w / 2.0)
         self.ax.set_ylim(yf - h / 2.0, yf + h / 2.0)
+        self._refresh_curve_data()
 
         # Mostrar el globo de error idéntico a la Imagen 2 en las coordenadas exactas
         self._show_click_tooltip_coords(target_x, yf)
@@ -467,6 +544,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         dy = (cur_ylim[1] - cur_ylim[0]) * dy_ratio
         self.ax.set_xlim(cur_xlim[0] + dx, cur_xlim[1] + dx)
         self.ax.set_ylim(cur_ylim[0] + dy, cur_ylim[1] + dy)
+        self._refresh_curve_data()
         self.draw_idle()
 
     # --- INTERACCIÓN DIRECTA CON EL RATÓN: PAN (ARRASTRE) Y ZOOM ---
@@ -506,6 +584,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
             # incrementa los límites en Y (+ dy_data)
             self.ax.set_xlim(self._press_xlim[0] - dx_data, self._press_xlim[1] - dx_data)
             self.ax.set_ylim(self._press_ylim[0] + dy_data, self._press_ylim[1] + dy_data)
+            self._refresh_curve_data()
             self.draw_idle()
             event.accept()
             return
@@ -516,7 +595,10 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         self.setCursor(Qt.OpenHandCursor)
         if self._is_panning:
             self._is_panning = False
-            if not self._has_dragged:
+            if self._has_dragged:
+                self._refresh_curve_data(force=True)
+                self.draw_idle()
+            else:
                 # Clic sin arrastre: convertir a coordenadas matemáticas e inspeccionar
                 pos = event.position() if hasattr(event, "position") else event.pos()
                 inv = self.ax.transData.inverted()
@@ -561,6 +643,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
         self.ax.set_xlim([xdata - new_w * (1 - relx), xdata + new_w * relx])
         self.ax.set_ylim([ydata - new_h * (1 - rely), ydata + new_h * rely])
+        self._refresh_curve_data()
         self.draw_idle()
         event.accept()
 

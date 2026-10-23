@@ -13,7 +13,7 @@ import numpy as np
 
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QSplitter, QToolBar, QComboBox, QPushButton, QLabel,
+    QSplitter, QToolBar, QPushButton, QLabel,
     QFileDialog, QMessageBox, QStatusBar, QFrame, QSizePolicy
 )
 from PySide6.QtCore import Qt, QSize
@@ -36,7 +36,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Serie de Taylor")
-        self.resize(1280, 800)
+        self.resize(1360, 820)
         self.setMinimumSize(960, 600)
 
         self.is_dark_mode = False
@@ -72,12 +72,12 @@ class MainWindow(QMainWindow):
 
         # Splitter horizontal: Panel Izquierdo (Álgebra) + Panel Central (Gráfica)
         self.main_splitter = QSplitter(Qt.Horizontal)
-        self.main_splitter.setHandleWidth(3)
+        self.main_splitter.setHandleWidth(5)
 
-        # Panel Izquierdo: Delgado (Vista Álgebra GeoGebra)
+        # Panel Izquierdo: (Vista Álgebra y Paso a Paso)
         self.sidebar = SidebarPanel(is_dark_mode=self.is_dark_mode)
-        self.sidebar.setMinimumWidth(260)
-        self.sidebar.setMaximumWidth(600) #ancho del panel izquierdo
+        self.sidebar.setMinimumWidth(320)
+        self.sidebar.setMaximumWidth(1000) # Ancho máximo expandible del panel izquierdo
         self.main_splitter.addWidget(self.sidebar)
 
         # Panel Central: Gráfica protagonista y Teclado alineado
@@ -102,7 +102,7 @@ class MainWindow(QMainWindow):
         self.main_splitter.addWidget(self.center_graph_panel)
         self.main_splitter.setStretchFactor(0, 0)
         self.main_splitter.setStretchFactor(1, 1)
-        self.main_splitter.setSizes([420, 960])
+        self.main_splitter.setSizes([540, 820])
 
         main_layout.addWidget(self.main_splitter, stretch=1)
 
@@ -118,26 +118,6 @@ class MainWindow(QMainWindow):
         toolbar.setIconSize(QSize(18, 18))
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
-
-        # Selector de Ejercicios Predefinidos (incluyendo los del cuaderno en la Imagen 4)
-        lbl_presets = QLabel("  Ejercicios de Ejemplo: ")
-        lbl_presets.setStyleSheet("font-weight: 700; color: #2563eb;")
-        toolbar.addWidget(lbl_presets)
-
-        self.combo_presets = QComboBox()
-        self.combo_presets.addItem("Seleccionar ejercicio...", None)
-        self.combo_presets.addItem("📋 Pizarrón: ln(x), x₀ = 1, eval ln(1.25) con error < 10⁻³", ("ln(x)", 1.0, 0.2, 2.5, 6, 1.25, 0.001))
-        self.combo_presets.addItem("Ejercicio a) x⁴ - 3x² + 1,  x₀ = 1", ("x^4 - 3x^2 + 1", 1.0, -2.5, 2.5, 4))
-        self.combo_presets.addItem("Ejercicio b) x² + x + 1,  x₀ = 1", ("x^2 + x + 1", 1.0, -2.0, 3.0, 2))
-        self.combo_presets.addItem("Ejercicio c) 2x³ - 3x² + 6x + 2,  x₀ = 1", ("2x^3 - 3x^2 + 6x + 2", 1.0, -2.0, 3.0, 3))
-        self.combo_presets.addItem("Ejercicio d) -0.5x² - 0.3x + 0.9,  x₀ = 1", ("-0.5x^2 - 0.3x + 0.9", 1.0, -3.0, 3.0, 2))
-        self.combo_presets.addItem("Ejemplo Exponencial: eˣ,  x₀ = 0", ("exp(x)", 0.0, -2.0, 3.0, 4))
-        self.combo_presets.addItem("Ejemplo Seno: sin(x),  x₀ = 0", ("sin(x)", 0.0, -5.0, 5.0, 5))
-        self.combo_presets.addItem("Ejemplo Racional: 1/(1+x²),  x₀ = 0", ("1/(1+x^2)", 0.0, -2.0, 2.0, 4))
-        self.combo_presets.currentIndexChanged.connect(self._on_preset_selected)
-        toolbar.addWidget(self.combo_presets)
-
-        toolbar.addSeparator()
 
         btn_table = QPushButton("📊 Tabla de Valores")
         btn_table.clicked.connect(self._open_values_table)
@@ -198,17 +178,6 @@ class MainWindow(QMainWindow):
         is_visible = self.virtual_keyboard.isVisible()
         self.virtual_keyboard.setVisible(not is_visible)
         self.btn_toggle_kbd.setChecked(not is_visible)
-
-    def _on_preset_selected(self, index: int):
-        data = self.combo_presets.currentData()
-        if data:
-            if len(data) == 5:
-                func_str, x0, x_min, x_max, order = data
-                x_eval, tol = 1.25, 0.001
-            else:
-                func_str, x0, x_min, x_max, order, x_eval, tol = data
-            self.sidebar.set_inputs(func_str, x0, x_min, x_max, order, x_eval=x_eval, tolerance=tol)
-            self.solve_series(func_str, x0, x_min, x_max, order)
 
     def solve_series(
         self,
