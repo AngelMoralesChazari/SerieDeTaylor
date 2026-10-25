@@ -13,11 +13,10 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import matplotlib
-matplotlib.use("QtAgg")
-import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.ticker import MultipleLocator, AutoLocator
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QPushButton, QSizePolicy
 from PySide6.QtCore import Qt, Signal
@@ -178,6 +177,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
         self._setup_style()
         self._xlim_cid = self.ax.callbacks.connect("xlim_changed", self._on_xlim_changed)
+        self._ylim_cid = self.ax.callbacks.connect("ylim_changed", self._on_ylim_changed)
 
         # Botonera flotante en la esquina superior derecha
         self.floating_nav = GraphFloatingNavWidget(self, is_dark_mode=self.is_dark_mode, parent=self)
@@ -216,6 +216,11 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         # Ejes X e Y en el origen
         self.ax.axhline(0, color=axis_color, linewidth=1.2, alpha=0.85)
         self.ax.axvline(0, color=axis_color, linewidth=1.2, alpha=0.85)
+
+        # Configurar vista centrada en (0, 0) con unidades de 1 en 1
+        self.ax.set_xlim(-3.8, 3.8)
+        self.ax.set_ylim(-3.5, 4.8)
+        self._update_locators()
 
     def set_dark_mode(self, is_dark: bool):
         self.is_dark_mode = is_dark
@@ -350,75 +355,113 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
     def auto_fit_view(self):
         """
-        Ajusta la vista para que la forma de las curvas se note claramente como en GeoGebra.
-        Se enfoca en los puntos críticos y concavidad de f(x) sobre el intervalo,
-        manteniendo una relación de aspecto geométrica equilibrada (~1:1) que impide
-        que ramas externas o colas de polinomios divergentes aplanen la gráfica.
+        Ajusta la vista para que el plano cartesiano salga centrado en (0, 0)
+        con unidades de 1 en 1 como en GeoGebra, abarcando el intervalo de estudio
+        y manteniendo una proporción geométrica equilibrada que permite al usuario
+        explorar con zoom in y zoom out con total naturalidad.
         """
-        if self.taylor_result is None or self.x_grid is None:
+        if self.taylor_result is None:
+            self.ax.set_xlim(-3.8, 3.8)
+            self.ax.set_ylim(-3.5, 4.8)
+            self._update_locators()
+            self.draw_idle()
             return
 
         res = self.taylor_result
-        mask = (self.x_grid >= res.x_min) & (self.x_grid <= res.x_max)
 
-        if self.y_true is not None:
+        # 1. Centrado en X: simétrico alrededor de x=0 para que el plano cartesiano salga centrado
+        if res.x_min <= 0 <= res.x_max:
+            half_x = max(abs(res.x_min), abs(res.x_max)) + 1.3
+            half_x = max(half_x, 3.8)
+            self.ax.set_xlim(-half_x, half_x)
+        else:
+            cx = (res.x_min + res.x_max) / 2.0
+            span_x = max(res.x_max - res.x_min, 3.0) + 2.0
+            self.ax.set_xlim(cx - span_x / 2.0, cx + span_x / 2.0)
+
+        # 2. Centrado en Y con unidades de 1 en 1
+        cur_xlim = self.ax.get_xlim()
+        span_x = abs(cur_xlim[1] - cur_xlim[0])
+
+        mask = (self.x_grid >= cur_xlim[0]) & (self.x_grid <= cur_xlim[1]) if self.x_grid is not None else None
+        if self.y_true is not None and mask is not None:
             valid_f = self.y_true[mask & np.isfinite(self.y_true)]
         else:
             valid_f = np.array([])
 
+        target_h = max(span_x * 1.05, 8.3)
         if len(valid_f) > 0:
-            x_span = max(res.x_max - res.x_min, 1.0)
             f_min = float(np.min(valid_f))
             f_max = float(np.max(valid_f))
-            full_span = f_max - f_min
-
-            # Caso 1: Rango acotado (sin, cos, racionales)
-            if full_span <= 3.5:
-                y_span = max(full_span * 1.3, 1.0)
-                y_min = f_min - 0.15 * y_span
-                y_max = y_min + y_span
-            else:
-                # Caso 2: Crecimiento polinomial / rápido (ej. x^4 - 3x^2 + 1)
-                # Proporción visual equilibrada (~1:1 o 1:1.2 como en GeoGebra)
-                target_h = max(x_span * 1.2, 5.0)
-
-                try:
-                    fx0 = float(res.func_eval(res.x0))
-                    if not np.isfinite(fx0):
-                        fx0 = (f_min + f_max) / 2.0
-                except Exception:
-                    fx0 = (f_min + f_max) / 2.0
-
-                dist_to_min = abs(fx0 - f_min)
-                dist_to_max = abs(f_max - fx0)
-
-                # Si f(x0) está cerca del mínimo (curva convexa / con pozo como x^4 - 3x^2 + 1)
-                if dist_to_min <= dist_to_max:
-                    y_min = f_min - max(0.08 * target_h, 0.4)
-                    y_max = y_min + target_h
-                elif dist_to_max < dist_to_min:
-                    # Curva cóncava hacia abajo (máximo local superior)
-                    y_max = f_max + max(0.08 * target_h, 0.4)
-                    y_min = y_max - target_h
-                else:
-                    # Centrado en f(x0)
-                    y_min = fx0 - target_h / 2.0
-                    y_max = fx0 + target_h / 2.0
-
-            self.ax.set_ylim(y_min, y_max)
+            y_min = min(-3.5, f_min - 1.0)
+            y_max = max(4.8, y_min + target_h)
+            if y_min < -15.0 or y_max > 25.0:
+                y_min = -max(abs(f_min), 3.5) * 1.2
+                y_max = max(abs(f_max), 4.8) * 1.2
         else:
-            self.ax.set_ylim(-3, 5)
+            y_min = -3.5
+            y_max = 4.8
 
-        dx = max(res.x_max - res.x_min, 1.0)
-        self.ax.set_xlim(res.x_min - 0.05 * dx, res.x_max + 0.05 * dx)
+        self.ax.set_ylim(y_min, y_max)
+        self._update_locators()
         self._refresh_curve_data(force=True)
         self.draw_idle()
 
+    def _update_locators(self):
+        """
+        Mantiene los ejes y la cuadrícula en unidades de 1 en 1 sin saltos de 2, 4 o 5,
+        exactamente como en GeoGebra, adaptándose suavemente si el usuario hace zoom extremo.
+        """
+        cur_xlim = self.ax.get_xlim()
+        cur_ylim = self.ax.get_ylim()
+        sx = abs(cur_xlim[1] - cur_xlim[0])
+        sy = abs(cur_ylim[1] - cur_ylim[0])
+
+        # Eje X: en escalas estándar (hasta ~35 unidades visibles) estrictamente de 1 en 1
+        if sx > 70:
+            self.ax.xaxis.set_major_locator(AutoLocator())
+        elif sx > 35:
+            self.ax.xaxis.set_major_locator(MultipleLocator(2.0))
+            self.ax.xaxis.set_minor_locator(MultipleLocator(0.5))
+        elif sx < 2.0:
+            self.ax.xaxis.set_major_locator(MultipleLocator(0.2))
+            self.ax.xaxis.set_minor_locator(MultipleLocator(0.05))
+        elif sx < 4.0:
+            self.ax.xaxis.set_major_locator(MultipleLocator(0.5))
+            self.ax.xaxis.set_minor_locator(MultipleLocator(0.1))
+        else:
+            self.ax.xaxis.set_major_locator(MultipleLocator(1.0))
+            self.ax.xaxis.set_minor_locator(MultipleLocator(0.2))
+
+        # Eje Y: en escalas estándar estrictamente de 1 en 1
+        if sy > 70:
+            self.ax.yaxis.set_major_locator(AutoLocator())
+        elif sy > 35:
+            self.ax.yaxis.set_major_locator(MultipleLocator(2.0))
+            self.ax.yaxis.set_minor_locator(MultipleLocator(0.5))
+        elif sy < 2.0:
+            self.ax.yaxis.set_major_locator(MultipleLocator(0.2))
+            self.ax.yaxis.set_minor_locator(MultipleLocator(0.05))
+        elif sy < 4.0:
+            self.ax.yaxis.set_major_locator(MultipleLocator(0.5))
+            self.ax.yaxis.set_minor_locator(MultipleLocator(0.1))
+        else:
+            self.ax.yaxis.set_major_locator(MultipleLocator(1.0))
+            self.ax.yaxis.set_minor_locator(MultipleLocator(0.2))
+
     def _on_xlim_changed(self, event_ax=None):
         """Callback invocado por Matplotlib cuando cambian los límites horizontales (zoom, pan, etc.)."""
-        if self._updating_curves or self.taylor_result is None:
+        if self._updating_curves:
             return
-        self._refresh_curve_data()
+        self._update_locators()
+        if self.taylor_result is not None:
+            self._refresh_curve_data()
+
+    def _on_ylim_changed(self, event_ax=None):
+        """Callback invocado por Matplotlib cuando cambian los límites verticales."""
+        if self._updating_curves:
+            return
+        self._update_locators()
 
     def _refresh_curve_data(self, force: bool = False):
         """

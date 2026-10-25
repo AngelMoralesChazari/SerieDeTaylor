@@ -433,28 +433,37 @@ class TaylorOptionsDialog(QDialog):
         self.is_dark_mode = is_dark_mode
         self.setWindowTitle("Configuración de Parámetros")
         self.setModal(True)
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(390)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setAutoFillBackground(True)
         self._setup_ui()
         self.apply_theme(self.is_dark_mode)
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(12)
+        root_layout = QVBoxLayout(self)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
-        lbl_head = QLabel("⚙ Parámetros de la Serie de Taylor")
-        lbl_head.setStyleSheet("font-size: 14px; font-weight: 700; color: #2563eb;")
-        layout.addWidget(lbl_head)
+        self.root_frame = QFrame()
+        self.root_frame.setObjectName("dialogRoot")
+        root_layout.addWidget(self.root_frame)
 
-        lbl_sub = QLabel("Configura los valores del desarrollo y el rango del plano cartesiano:")
-        lbl_sub.setStyleSheet("font-size: 11px; color: #64748b;")
-        lbl_sub.setWordWrap(True)
-        layout.addWidget(lbl_sub)
+        content_layout = QVBoxLayout(self.root_frame)
+        content_layout.setContentsMargins(20, 18, 20, 18)
+        content_layout.setSpacing(12)
+
+        self.lbl_head = QLabel("⚙ Parámetros de la Serie de Taylor")
+        self.lbl_head.setStyleSheet("font-size: 14px; font-weight: 700; color: #2563eb; background: transparent;")
+        content_layout.addWidget(self.lbl_head)
+
+        self.lbl_sub = QLabel("Configura los valores del desarrollo y el rango del plano cartesiano:")
+        self.lbl_sub.setWordWrap(True)
+        content_layout.addWidget(self.lbl_sub)
 
         # 1. Parámetros Principales
-        box_main = QFrame()
-        box_main.setObjectName("optionsGroup")
-        lay_main = QVBoxLayout(box_main)
+        self.box_main = QFrame()
+        self.box_main.setProperty("class", "cardBox")
+        lay_main = QVBoxLayout(self.box_main)
         lay_main.setContentsMargins(12, 12, 12, 12)
         lay_main.setSpacing(8)
 
@@ -490,19 +499,18 @@ class TaylorOptionsDialog(QDialog):
         grid.addWidget(self.spin_xmax, 1, 3)
 
         lay_main.addLayout(grid)
-        layout.addWidget(box_main)
+        content_layout.addWidget(self.box_main)
 
         # 2. Opciones Adicionales (Punto b y tolerancia)
-        box_adv = QFrame()
-        box_adv.setObjectName("optionsGroup")
-        lay_adv = QVBoxLayout(box_adv)
-        lay_adv.setContentsMargins(12, 12, 12, 12)
+        self.box_adv = QFrame()
+        self.box_adv.setProperty("class", "cardBox")
+        lay_adv = QVBoxLayout(self.box_adv)
+        lay_adv.setContentsMargins(12, 10, 12, 10)
         lay_adv.setSpacing(6)
 
         self.chk_advanced = QCheckBox("Opciones adicionales (Evaluación y Tolerancia)")
         self.chk_advanced.setChecked(False)
         self.chk_advanced.setCursor(Qt.PointingHandCursor)
-        self.chk_advanced.setStyleSheet("font-size: 11px; font-weight: 600; color: #2563eb;")
         self.chk_advanced.toggled.connect(self._on_adv_toggled)
         lay_adv.addWidget(self.chk_advanced)
 
@@ -531,7 +539,7 @@ class TaylorOptionsDialog(QDialog):
 
         self.advanced_container.setVisible(False)
         lay_adv.addWidget(self.advanced_container)
-        layout.addWidget(box_adv)
+        content_layout.addWidget(self.box_adv)
 
         # Botones inferiores: Cancelar y Aplicar
         btn_layout = QHBoxLayout()
@@ -549,7 +557,7 @@ class TaylorOptionsDialog(QDialog):
         self.btn_apply.clicked.connect(self._on_apply_clicked)
         btn_layout.addWidget(self.btn_apply)
 
-        layout.addLayout(btn_layout)
+        content_layout.addLayout(btn_layout)
 
     def _on_adv_toggled(self, checked: bool):
         self.advanced_container.setVisible(checked)
@@ -591,32 +599,78 @@ class TaylorOptionsDialog(QDialog):
 
     def apply_theme(self, is_dark: bool):
         self.is_dark_mode = is_dark
-        bg = "#18181b" if is_dark else "#ffffff"
-        text = "#f4f4f5" if is_dark else "#0f172a"
-        card_bg = "#27272a" if is_dark else "#f8fafc"
-        border = "#3f3f46" if is_dark else "#cbd5e1"
-        btn_bg = "#3f3f46" if is_dark else "#e2e8f0"
-        btn_text = "#f4f4f5" if is_dark else "#0f172a"
+        if is_dark:
+            bg = "#0f172a"
+            card_bg = "#1e293b"
+            border = "#334155"
+            text_primary = "#f8fafc"
+            text_secondary = "#94a3b8"
+            input_bg = "#0f172a"
+            btn_bg = "#334155"
+            btn_hover = "#475569"
+            btn_text = "#f8fafc"
+        else:
+            bg = "#ffffff"
+            card_bg = "#f8fafc"
+            border = "#e2e8f0"
+            text_primary = "#0f172a"
+            text_secondary = "#64748b"
+            input_bg = "#ffffff"
+            btn_bg = "#f1f5f9"
+            btn_hover = "#e2e8f0"
+            btn_text = "#0f172a"
 
-        self.setStyleSheet(f"""
-            QDialog {{
+        if hasattr(self, "lbl_sub"):
+            self.lbl_sub.setStyleSheet(f"font-size: 11px; color: {text_secondary}; background: transparent;")
+
+        self.root_frame.setStyleSheet(f"""
+            QFrame#dialogRoot {{
                 background-color: {bg};
-                color: {text};
             }}
-            QFrame#optionsGroup {{
+            QLabel {{
+                background: transparent;
+                color: {text_primary};
+                font-size: 11px;
+            }}
+            QFrame[class="cardBox"] {{
                 background-color: {card_bg};
                 border: 1px solid {border};
                 border-radius: 8px;
             }}
-            QLabel {{
-                color: {text};
-            }}
             QDoubleSpinBox, QSpinBox, QComboBox {{
-                background-color: {bg};
+                background-color: {input_bg};
+                border: 1.5px solid {border};
+                border-radius: 5px;
+                padding: 4px 8px;
+                color: {text_primary};
+                font-size: 12px;
+            }}
+            QDoubleSpinBox:focus, QSpinBox:focus, QComboBox:focus {{
+                border-color: #2563eb;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {input_bg};
+                color: {text_primary};
+                selection-background-color: #2563eb;
+                selection-color: #ffffff;
                 border: 1px solid {border};
+            }}
+            QCheckBox {{
+                background: transparent;
+                color: #2563eb;
+                font-size: 11px;
+                font-weight: 600;
+            }}
+            QCheckBox::indicator {{
+                width: 16px;
+                height: 16px;
+                border: 1.5px solid {border};
                 border-radius: 4px;
-                padding: 3px 6px;
-                color: {text};
+                background-color: {input_bg};
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: #2563eb;
+                border-color: #2563eb;
             }}
             QPushButton {{
                 background-color: {btn_bg};
@@ -624,10 +678,11 @@ class TaylorOptionsDialog(QDialog):
                 border: 1px solid {border};
                 border-radius: 6px;
                 font-weight: 600;
-                padding: 4px 12px;
+                padding: 6px 14px;
             }}
             QPushButton:hover {{
-                border-color: #3b82f6;
+                background-color: {btn_hover};
+                border-color: #94a3b8;
             }}
             QPushButton[class="primary"] {{
                 background-color: #2563eb;
@@ -806,20 +861,21 @@ class SidebarPanel(QWidget):
 
         # Tarjeta para la fórmula final construida (idéntica a las tarjetas de orden, sin scroll interno)
         self.final_formula_box = QFrame()
+        self.final_formula_box.setObjectName("final_formula_box")
         self._update_final_formula_box_style()
 
         f_box_layout = QVBoxLayout(self.final_formula_box)
         f_box_layout.setContentsMargins(8, 6, 8, 8)
         f_box_layout.setSpacing(4)
 
-        # Encabezado con badge distintivo
+        # Encabezado con badge distintivo en verde esmeralda para resaltar
         header_f = QHBoxLayout()
-        lbl_f_badge = QLabel(" Fórmula de Taylor Construida ")
-        lbl_f_badge.setStyleSheet(
-            "background-color: #2563eb; color: #ffffff; font-weight: bold; "
-            "font-size: 10px; border-radius: 3px; padding: 1px 4px;"
+        self.lbl_f_badge = QLabel(" Fórmula de Taylor Construida ")
+        self.lbl_f_badge.setStyleSheet(
+            "background-color: #059669; color: #ffffff; font-weight: bold; "
+            "font-size: 10px; border-radius: 3px; padding: 1px 5px;"
         )
-        header_f.addWidget(lbl_f_badge)
+        header_f.addWidget(self.lbl_f_badge)
         header_f.addStretch()
         f_box_layout.addLayout(header_f)
 
@@ -893,12 +949,19 @@ class SidebarPanel(QWidget):
             self.display_results(self.result)
 
     def _update_final_formula_box_style(self):
-        bg = "#1e293b" if self.is_dark_mode else "#ffffff"
-        border = "#334155" if self.is_dark_mode else "#e2e8f0"
+        bg = "#064e3b33" if self.is_dark_mode else "#f0fdf4"
+        border = "#059669" if self.is_dark_mode else "#10b981"
+        accent_green = "#10b981" if self.is_dark_mode else "#059669"
         if hasattr(self, "final_formula_box"):
             self.final_formula_box.setStyleSheet(
-                f"QFrame {{ background-color: {bg}; border: 1px solid {border}; "
-                f"border-left: 3px solid #2563eb; border-radius: 4px; }}"
+                f"QFrame#final_formula_box {{ background-color: {bg}; border: 1.5px solid {border}; "
+                f"border-left: 4px solid {accent_green}; border-radius: 5px; }}"
+                f"QFrame#final_formula_box QLabel {{ border: none; background: transparent; }}"
+            )
+        if hasattr(self, "lbl_f_badge"):
+            self.lbl_f_badge.setStyleSheet(
+                f"background-color: {accent_green}; color: #ffffff; font-weight: bold; "
+                f"font-size: 10px; border-radius: 3px; padding: 1px 5px;"
             )
 
     def _on_fx_text_changed(self, text: str):
