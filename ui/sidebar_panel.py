@@ -620,19 +620,24 @@ class TaylorOptionsDialog(QDialog):
 
     def _on_eval_x_toggled(self, checked: bool):
         self.spin_x_eval.setEnabled(checked)
-        self.chk_tolerance.setEnabled(checked)
-        self.spin_tolerance.setEnabled(checked and self.chk_tolerance.isChecked())
 
     def _on_tolerance_toggled(self, checked: bool):
-        self.spin_tolerance.setEnabled(checked and self.chk_eval_x.isChecked())
+        self.spin_tolerance.setEnabled(checked)
 
     def _on_adv_toggled(self, checked: bool):
         self.advanced_container.setVisible(checked)
-        if hasattr(self, "box_adv"):
-            self.box_adv.adjustSize()
-        if hasattr(self, "root_frame"):
-            self.root_frame.adjustSize()
-        self.adjustSize()
+        self.box_adv.updateGeometry()
+        if hasattr(self, "root_frame") and self.root_frame.layout():
+            self.root_frame.layout().activate()
+        if self.layout():
+            self.layout().activate()
+        if checked:
+            target_h = max(390, self.sizeHint().height())
+            self.setMinimumHeight(target_h)
+            self.resize(self.width(), target_h)
+        else:
+            self.setMinimumHeight(0)
+            self.adjustSize()
 
     def open_dialog(self):
         self._backup = {
@@ -646,11 +651,18 @@ class TaylorOptionsDialog(QDialog):
             "use_tol": self.chk_tolerance.isChecked(),
             "tol": self.spin_tolerance.value(),
         }
-        if hasattr(self, "box_adv"):
-            self.box_adv.adjustSize()
-        if hasattr(self, "root_frame"):
-            self.root_frame.adjustSize()
-        self.adjustSize()
+        self.box_adv.updateGeometry()
+        if hasattr(self, "root_frame") and self.root_frame.layout():
+            self.root_frame.layout().activate()
+        if self.layout():
+            self.layout().activate()
+        if self.chk_advanced.isChecked():
+            target_h = max(390, self.sizeHint().height())
+            self.setMinimumHeight(target_h)
+            self.resize(self.width(), target_h)
+        else:
+            self.setMinimumHeight(0)
+            self.adjustSize()
         self.exec()
 
     def reject(self):
@@ -664,6 +676,8 @@ class TaylorOptionsDialog(QDialog):
             self.spin_x_eval.setValue(self._backup["x_eval"])
             self.chk_tolerance.setChecked(self._backup.get("use_tol", False))
             self.spin_tolerance.setValue(self._backup["tol"])
+            self.spin_x_eval.setEnabled(self.chk_eval_x.isChecked())
+            self.spin_tolerance.setEnabled(self.chk_tolerance.isChecked())
         super().reject()
 
     def _on_apply_clicked(self):
@@ -1106,14 +1120,14 @@ class SidebarPanel(QWidget):
     def is_eval_point_enabled(self) -> bool:
         if not self.chk_advanced.isChecked():
             return False
+        if hasattr(self, "chk_eval_x") and hasattr(self, "chk_tolerance"):
+            return self.chk_eval_x.isChecked() or self.chk_tolerance.isChecked()
         if hasattr(self, "chk_eval_x"):
             return self.chk_eval_x.isChecked()
         return True
 
     def get_selected_tolerance(self) -> Optional[float]:
         if not self.chk_advanced.isChecked():
-            return None
-        if hasattr(self, "chk_eval_x") and not self.chk_eval_x.isChecked():
             return None
         if hasattr(self, "chk_tolerance") and not self.chk_tolerance.isChecked():
             return None

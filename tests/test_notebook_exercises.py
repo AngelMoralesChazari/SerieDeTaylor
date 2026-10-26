@@ -272,13 +272,23 @@ def test_independent_eval_and_tolerance_checkboxes():
     assert panel.get_selected_tolerance() == 0.001
     assert panel.whiteboard_widget_tab.eval_data["best_order"] == 4
 
-    # 3. Desactivar evaluar en x
+    # 3. Desactivar evaluar en x pero mantener tolerancia activada
     panel.chk_eval_x.setChecked(False)
-    assert panel.is_eval_point_enabled() is False
-    assert panel.get_selected_tolerance() is None
+    panel._on_eval_param_changed()
+
+    # chk_tolerance y spin_tolerance deben seguir habilitados y activos directamente
+    assert panel.chk_tolerance.isEnabled() is True
+    assert panel.spin_tolerance.isEnabled() is True
+    assert panel.get_selected_tolerance() == 0.001
+    assert panel.is_eval_point_enabled() is True
     assert panel.spin_x_eval.isEnabled() is False
-    assert panel.chk_tolerance.isEnabled() is False
+
+    # 4. Desactivar tolerancia también
+    panel.chk_tolerance.setChecked(False)
+    panel._on_eval_param_changed()
+    assert panel.get_selected_tolerance() is None
     assert panel.spin_tolerance.isEnabled() is False
+    assert panel.is_eval_point_enabled() is False
 
 
 

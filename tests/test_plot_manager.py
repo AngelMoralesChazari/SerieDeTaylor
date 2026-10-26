@@ -38,12 +38,13 @@ def test_autofit_view_curves_visible(qapp):
     y_min, y_max = ylim[0], ylim[1]
     y_span = y_max - y_min
 
-    # El mínimo de f(x) es -1.25, por lo que y_min debe estar ligeramente por debajo de -1.25
+    # El mínimo de f(x) es -1.25, por lo que y_min debe contener el fondo del pozo -1.25
     assert y_min <= -1.25, f"y_min ({y_min}) debe contener el fondo del pozo -1.25"
-    assert y_min > -6.0, f"y_min ({y_min}) no debe estar aplastado por polinomios divergentes"
+    assert y_min >= -12.0, f"y_min ({y_min}) debe mantenerse en la escala base de 10"
+    assert y_max >= 10.0, f"y_max ({y_max}) debe alcanzar la escala de 10 como en la imagen"
 
     # La altura total de la vista debe ser razonable para que la forma de 'W' sea prominente
-    assert 4.0 <= y_span <= 18.0, f"El rango vertical ({y_span}) debe permitir que las curvas se noten claramente"
+    assert 10.0 <= y_span <= 25.0, f"El rango vertical ({y_span}) debe permitir que las curvas se noten claramente"
 
 
 def test_pan_and_zoom_methods(qapp):

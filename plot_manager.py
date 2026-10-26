@@ -217,9 +217,9 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         self.ax.axhline(0, color=axis_color, linewidth=1.2, alpha=0.85)
         self.ax.axvline(0, color=axis_color, linewidth=1.2, alpha=0.85)
 
-        # Configurar vista centrada en (0, 0) con unidades de 1 en 1
-        self.ax.set_xlim(-3.8, 3.8)
-        self.ax.set_ylim(-3.5, 4.8)
+        # Configurar vista centrada en (0, 0) con escala de 10 y unidades de 1 en 1
+        self.ax.set_xlim(-8.8, 8.8)
+        self.ax.set_ylim(-8.2, 10.5)
         self._update_locators()
 
     def set_dark_mode(self, is_dark: bool):
@@ -356,53 +356,31 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
     def auto_fit_view(self):
         """
         Ajusta la vista para que el plano cartesiano salga centrado en (0, 0)
-        con unidades de 1 en 1 como en GeoGebra, abarcando el intervalo de estudio
-        y manteniendo una proporción geométrica equilibrada que permite al usuario
-        explorar con zoom in y zoom out con total naturalidad.
+        con una escala hasta 10 y unidades de 1 en 1 como en GeoGebra (Imagen 1),
+        permitiendo al usuario explorar con zoom in y zoom out con total naturalidad.
         """
         if self.taylor_result is None:
-            self.ax.set_xlim(-3.8, 3.8)
-            self.ax.set_ylim(-3.5, 4.8)
+            self.ax.set_xlim(-8.8, 8.8)
+            self.ax.set_ylim(-8.2, 10.5)
             self._update_locators()
             self.draw_idle()
             return
 
         res = self.taylor_result
 
-        # 1. Centrado en X: simétrico alrededor de x=0 para que el plano cartesiano salga centrado
+        # 1. Centrado en X: simétrico alrededor de x=0 con escala base de 10 (unidades de 1 en 1)
         if res.x_min <= 0 <= res.x_max:
-            half_x = max(abs(res.x_min), abs(res.x_max)) + 1.3
-            half_x = max(half_x, 3.8)
+            half_x = max(abs(res.x_min), abs(res.x_max)) + 1.5
+            half_x = max(half_x, 8.8)
             self.ax.set_xlim(-half_x, half_x)
         else:
             cx = (res.x_min + res.x_max) / 2.0
-            span_x = max(res.x_max - res.x_min, 3.0) + 2.0
+            span_x = max(res.x_max - res.x_min, 6.0) + 3.0
+            span_x = max(span_x, 17.6)
             self.ax.set_xlim(cx - span_x / 2.0, cx + span_x / 2.0)
 
-        # 2. Centrado en Y con unidades de 1 en 1
-        cur_xlim = self.ax.get_xlim()
-        span_x = abs(cur_xlim[1] - cur_xlim[0])
-
-        mask = (self.x_grid >= cur_xlim[0]) & (self.x_grid <= cur_xlim[1]) if self.x_grid is not None else None
-        if self.y_true is not None and mask is not None:
-            valid_f = self.y_true[mask & np.isfinite(self.y_true)]
-        else:
-            valid_f = np.array([])
-
-        target_h = max(span_x * 1.05, 8.3)
-        if len(valid_f) > 0:
-            f_min = float(np.min(valid_f))
-            f_max = float(np.max(valid_f))
-            y_min = min(-3.5, f_min - 1.0)
-            y_max = max(4.8, y_min + target_h)
-            if y_min < -15.0 or y_max > 25.0:
-                y_min = -max(abs(f_min), 3.5) * 1.2
-                y_max = max(abs(f_max), 4.8) * 1.2
-        else:
-            y_min = -3.5
-            y_max = 4.8
-
-        self.ax.set_ylim(y_min, y_max)
+        # 2. Centrado en Y con escala hasta 10 y unidades de 1 en 1 idéntica a la Imagen 1
+        self.ax.set_ylim(-8.2, 10.5)
         self._update_locators()
         self._refresh_curve_data(force=True)
         self.draw_idle()
