@@ -10,6 +10,7 @@ Diseñado con la estética minimalista y limpia de GeoGebra:
 
 from __future__ import annotations
 
+import time
 from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import matplotlib
@@ -19,7 +20,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolb
 from matplotlib.ticker import MultipleLocator, AutoLocator
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QPushButton, QSizePolicy
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QColor
 
 from taylor_engine import TaylorSeriesResult, TaylorOrderStep
@@ -174,6 +175,14 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         self._press_ylim: Optional[Tuple[float, float]] = None
         self._has_dragged = False
         self._updating_curves = False
+        self._last_pan_draw_time = 0.0
+        self._cached_locator_x: Optional[Tuple[Optional[float], Optional[float]]] = None
+        self._cached_locator_y: Optional[Tuple[Optional[float], Optional[float]]] = None
+
+        # Temporizador para suavizar zoom con rueda y evitar recálculos en ráfaga
+        self._wheel_timer = QTimer(self)
+        self._wheel_timer.setSingleShot(True)
+        self._wheel_timer.timeout.connect(self._on_wheel_stopped)
 
         self._setup_style()
         self._xlim_cid = self.ax.callbacks.connect("xlim_changed", self._on_xlim_changed)
@@ -388,48 +397,58 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
     def _update_locators(self):
         """
         Mantiene los ejes y la cuadrícula en unidades de 1 en 1 sin saltos de 2, 4 o 5,
-        exactamente como en GeoGebra, adaptándose suavemente si el usuario hace zoom extremo.
+        optimizando drásticamente el rendimiento con caché para evitar resetear ticks en cada evento.
         """
         cur_xlim = self.ax.get_xlim()
         cur_ylim = self.ax.get_ylim()
         sx = abs(cur_xlim[1] - cur_xlim[0])
         sy = abs(cur_ylim[1] - cur_ylim[0])
 
-        # Eje X: en escalas estándar (hasta ~35 unidades visibles) estrictamente de 1 en 1
+        # Determinar intervalos óptimos para Eje X
         if sx > 70:
-            self.ax.xaxis.set_major_locator(AutoLocator())
+            maj_x, min_x = None, None
         elif sx > 35:
-            self.ax.xaxis.set_major_locator(MultipleLocator(2.0))
-            self.ax.xaxis.set_minor_locator(MultipleLocator(0.5))
+            maj_x, min_x = 2.0, 0.5
         elif sx < 2.0:
-            self.ax.xaxis.set_major_locator(MultipleLocator(0.2))
-            self.ax.xaxis.set_minor_locator(MultipleLocator(0.05))
+            maj_x, min_x = 0.2, 0.05
         elif sx < 4.0:
-            self.ax.xaxis.set_major_locator(MultipleLocator(0.5))
-            self.ax.xaxis.set_minor_locator(MultipleLocator(0.1))
+            maj_x, min_x = 0.5, 0.1
         else:
-            self.ax.xaxis.set_major_locator(MultipleLocator(1.0))
-            self.ax.xaxis.set_minor_locator(MultipleLocator(0.2))
+            maj_x, min_x = 1.0, 0.5
 
-        # Eje Y: en escalas estándar estrictamente de 1 en 1
+        if (maj_x, min_x) != self._cached_locator_x:
+            self._cached_locator_x = (maj_x, min_x)
+            if maj_x is None:
+                self.ax.xaxis.set_major_locator(AutoLocator())
+            else:
+                self.ax.xaxis.set_major_locator(MultipleLocator(maj_x))
+                if min_x is not None:
+                    self.ax.xaxis.set_minor_locator(MultipleLocator(min_x))
+
+        # Determinar intervalos óptimos para Eje Y
         if sy > 70:
-            self.ax.yaxis.set_major_locator(AutoLocator())
+            maj_y, min_y = None, None
         elif sy > 35:
-            self.ax.yaxis.set_major_locator(MultipleLocator(2.0))
-            self.ax.yaxis.set_minor_locator(MultipleLocator(0.5))
+            maj_y, min_y = 2.0, 0.5
         elif sy < 2.0:
-            self.ax.yaxis.set_major_locator(MultipleLocator(0.2))
-            self.ax.yaxis.set_minor_locator(MultipleLocator(0.05))
+            maj_y, min_y = 0.2, 0.05
         elif sy < 4.0:
-            self.ax.yaxis.set_major_locator(MultipleLocator(0.5))
-            self.ax.yaxis.set_minor_locator(MultipleLocator(0.1))
+            maj_y, min_y = 0.5, 0.1
         else:
-            self.ax.yaxis.set_major_locator(MultipleLocator(1.0))
-            self.ax.yaxis.set_minor_locator(MultipleLocator(0.2))
+            maj_y, min_y = 1.0, 0.5
+
+        if (maj_y, min_y) != self._cached_locator_y:
+            self._cached_locator_y = (maj_y, min_y)
+            if maj_y is None:
+                self.ax.yaxis.set_major_locator(AutoLocator())
+            else:
+                self.ax.yaxis.set_major_locator(MultipleLocator(maj_y))
+                if min_y is not None:
+                    self.ax.yaxis.set_minor_locator(MultipleLocator(min_y))
 
     def _on_xlim_changed(self, event_ax=None):
-        """Callback invocado por Matplotlib cuando cambian los límites horizontales (zoom, pan, etc.)."""
-        if self._updating_curves:
+        """Callback invocado por Matplotlib cuando cambian los límites horizontales."""
+        if self._updating_curves or self._is_panning:
             return
         self._update_locators()
         if self.taylor_result is not None:
@@ -437,19 +456,18 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
     def _on_ylim_changed(self, event_ax=None):
         """Callback invocado por Matplotlib cuando cambian los límites verticales."""
-        if self._updating_curves:
+        if self._updating_curves or self._is_panning:
             return
         self._update_locators()
 
     def _refresh_curve_data(self, force: bool = False):
         """
-        Evalúa y extiende dinámicamente las curvas sobre el viewport visible actual (más margen).
-        Comportamiento idéntico a GeoGebra:
-        - Al hacer zoom out, las curvas no se cortan y continúan dibujándose en todo el rango visible.
-        - Al hacer zoom in, se recalculan para mantener una resolución suave y continua.
-        - Al desplazarse (pan), el margen pre-calculado evita parpadeos o cortes en los bordes.
+        Evalúa y extiende dinámicamente las curvas sobre el viewport visible actual (más amplio margen).
+        Optimizado para cero costo de CPU durante arrastres (pan) y navegación en tiempo real.
         """
         if self.taylor_result is None or self._updating_curves:
+            return
+        if self._is_panning and not force:
             return
 
         cur_xlim = self.ax.get_xlim()
@@ -460,24 +478,23 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
             return
 
         # Comprobar si la malla actual ya cubre ampliamente la vista con buena resolución
-        if not force and self.x_grid is not None and len(self.x_grid) >= 300:
+        if not force and self.x_grid is not None and len(self.x_grid) >= 200:
             grid_min = float(self.x_grid[0])
             grid_max = float(self.x_grid[-1])
-            # Si el área visible está bien cubierta con al menos 20% de margen a cada lado
-            if grid_min <= (x_vis_min - 0.20 * span) and grid_max >= (x_vis_max + 0.20 * span):
+            # Si el área visible está ampliamente cubierta con margen
+            if grid_min <= (x_vis_min - 0.35 * span) and grid_max >= (x_vis_max + 0.35 * span):
                 pts_in_view = int(np.count_nonzero((self.x_grid >= x_vis_min) & (self.x_grid <= x_vis_max)))
-                # Y tiene entre 250 y 1500 puntos en pantalla para garantizar suavidad sin exceso
-                if 250 <= pts_in_view <= 1500:
+                if 200 <= pts_in_view <= 1600:
                     return
 
         self._updating_curves = True
         try:
-            # Margen del 80% fuera de la pantalla para permitir arrastres fluidos sin ver cortes
-            pad = max(span * 0.8, 1.0)
+            # Margen amplio (2.5x span) para permitir arrastres fluidos sin recalcular
+            pad = max(span * 2.5, 25.0)
             x_start = x_vis_min - pad
             x_end = x_vis_max + pad
 
-            resolution = 1000
+            resolution = 800
             new_x = np.linspace(x_start, x_end, resolution)
             res = self.taylor_result
 
@@ -585,7 +602,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        """Desplaza en tiempo real los ejes de la gráfica al arrastrar el ratón."""
+        """Desplaza en tiempo real los ejes de la gráfica al arrastrar el ratón de forma ultra fluida."""
         if self._is_panning and self._press_coord is not None and self._press_xlim is not None and self._press_ylim is not None:
             pos = event.position() if hasattr(event, "position") else event.pos()
             dx_pixels = pos.x() - self._press_coord[0]
@@ -601,23 +618,27 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
             dx_data = dx_pixels * (x_span / max(bbox.width, 1.0))
             dy_data = dy_pixels * (y_span / max(bbox.height, 1.0))
 
-            # En Qt, pos.y() crece hacia abajo. Por tanto, arrastrar hacia abajo (dy_pixels > 0)
-            # incrementa los límites en Y (+ dy_data)
+            # Desplazar límites de los ejes (sin invocar recálculos pesados durante el movimiento)
             self.ax.set_xlim(self._press_xlim[0] - dx_data, self._press_xlim[1] - dx_data)
             self.ax.set_ylim(self._press_ylim[0] + dy_data, self._press_ylim[1] + dy_data)
-            self._refresh_curve_data()
-            self.draw_idle()
+
+            # Limitador de FPS a ~40-50 FPS durante arrastre para fluidez total sin saturar la CPU
+            now = time.monotonic()
+            if now - self._last_pan_draw_time >= 0.022:
+                self._last_pan_draw_time = now
+                self.draw_idle()
             event.accept()
             return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        """Finaliza el arrastre y, si fue un clic puro sin desplazamiento, muestra el tooltip del punto."""
+        """Finaliza el arrastre y sincroniza la vista y curvas con alta precisión."""
         self.setCursor(Qt.OpenHandCursor)
         if self._is_panning:
             self._is_panning = False
             if self._has_dragged:
-                self._refresh_curve_data(force=True)
+                self._update_locators()
+                self._refresh_curve_data(force=False)
                 self.draw_idle()
             else:
                 # Clic sin arrastre: convertir a coordenadas matemáticas e inspeccionar
@@ -664,9 +685,21 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
         self.ax.set_xlim([xdata - new_w * (1 - relx), xdata + new_w * relx])
         self.ax.set_ylim([ydata - new_h * (1 - rely), ydata + new_h * rely])
-        self._refresh_curve_data()
-        self.draw_idle()
+
+        now = time.monotonic()
+        if now - self._last_pan_draw_time >= 0.022:
+            self._last_pan_draw_time = now
+            self.draw_idle()
+
+        # Temporizador para actualizar resolución y ticks suavemente al detenerse el giro
+        self._wheel_timer.start(80)
         event.accept()
+
+    def _on_wheel_stopped(self):
+        """Se ejecuta al terminar la ráfaga de la rueda del ratón para sincronizar curvas."""
+        self._update_locators()
+        self._refresh_curve_data(force=False)
+        self.draw_idle()
 
     def keyPressEvent(self, event):
         """Permite desplazarse con las flechas del teclado y zoom con teclas +/-."""

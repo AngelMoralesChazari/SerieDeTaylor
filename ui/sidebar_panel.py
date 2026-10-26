@@ -497,7 +497,7 @@ class TaylorOptionsDialog(QDialog):
         content_layout.setContentsMargins(20, 18, 20, 18)
         content_layout.setSpacing(12)
 
-        self.lbl_head = QLabel("⚙ Parámetros de la Serie de Taylor")
+        self.lbl_head = QLabel("Parámetros de la Serie de Taylor")
         self.lbl_head.setStyleSheet("font-size: 14px; font-weight: 700; color: #2563eb; background: transparent;")
         content_layout.addWidget(self.lbl_head)
 
