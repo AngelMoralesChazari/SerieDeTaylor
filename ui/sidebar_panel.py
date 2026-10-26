@@ -302,17 +302,22 @@ class WhiteboardConvergenceWidget(QFrame):
         title_lbl.setStyleSheet("font-weight: 800; font-size: 11.5px; color: #10b981;")
         h_layout.addWidget(title_lbl)
 
-        tol_str = f"{tol:g}" if tol is not None else "Sin límite"
-        if tol == 0.001:
-            tol_str = "10⁻³ (0.001)"
-        elif tol == 0.0001:
-            tol_str = "10⁻⁴ (0.0001)"
-        elif tol == 0.01:
-            tol_str = "10⁻² (0.01)"
+        if tol is not None:
+            tol_str = f"{tol:g}"
+            if abs(tol - 0.001) < 1e-9:
+                tol_str = "10⁻³ (0.001)"
+            elif abs(tol - 0.0001) < 1e-9:
+                tol_str = "10⁻⁴ (0.0001)"
+            elif abs(tol - 0.01) < 1e-9:
+                tol_str = "10⁻² (0.01)"
+            tol_display = f"Tolerancia: < {tol_str}"
+        else:
+            tol_str = "Sin límite"
+            tol_display = "Tolerancia: Desactivada (Evaluación pura)"
 
         sub_lbl = QLabel(
             f"Sustitución en potencias: (x - x₀) = ({x_eval:g} - {x0:g}) = {dx:g}  |  "
-            f"Tolerancia: < {tol_str}"
+            f"{tol_display}"
         )
         sub_lbl.setStyleSheet(f"font-size: 9.5px; color: {muted_color}; font-weight: 600;")
         h_layout.addWidget(sub_lbl)
@@ -560,7 +565,13 @@ class TaylorOptionsDialog(QDialog):
         lay_adv_grid.setHorizontalSpacing(10)
         lay_adv_grid.setVerticalSpacing(8)
 
-        lay_adv_grid.addWidget(QLabel("Evaluar en x:"), 0, 0)
+        # Casilla 1: Evaluar aproximación en un punto x
+        self.chk_eval_x = QCheckBox("Evaluar aproximación en x:")
+        self.chk_eval_x.setChecked(True)
+        self.chk_eval_x.setCursor(Qt.PointingHandCursor)
+        self.chk_eval_x.toggled.connect(self._on_eval_x_toggled)
+        lay_adv_grid.addWidget(self.chk_eval_x, 0, 0)
+
         self.spin_x_eval = QDoubleSpinBox()
         self.spin_x_eval.setRange(-1000.0, 1000.0)
         self.spin_x_eval.setDecimals(3)
@@ -568,13 +579,20 @@ class TaylorOptionsDialog(QDialog):
         self.spin_x_eval.setValue(1.25)
         lay_adv_grid.addWidget(self.spin_x_eval, 0, 1)
 
-        lay_adv_grid.addWidget(QLabel("Tolerancia error:"), 1, 0)
+        # Casilla 2: Criterio de tolerancia de error (independiente)
+        self.chk_tolerance = QCheckBox("Criterio de tolerancia de error:")
+        self.chk_tolerance.setChecked(False)
+        self.chk_tolerance.setCursor(Qt.PointingHandCursor)
+        self.chk_tolerance.toggled.connect(self._on_tolerance_toggled)
+        lay_adv_grid.addWidget(self.chk_tolerance, 1, 0)
+
         self.spin_tolerance = ScientificDoubleSpinBox()
         self.spin_tolerance.setRange(0.0, 10.0)
         self.spin_tolerance.setDecimals(8)
         self.spin_tolerance.setSingleStep(0.0005)
         self.spin_tolerance.setValue(0.001)
         self.spin_tolerance.setSpecialValueText("Sin límite (0)")
+        self.spin_tolerance.setEnabled(False)
         lay_adv_grid.addWidget(self.spin_tolerance, 1, 1)
 
         self.advanced_container.setVisible(False)
@@ -600,6 +618,14 @@ class TaylorOptionsDialog(QDialog):
         content_layout.addStretch(1)
         content_layout.addLayout(btn_layout)
 
+    def _on_eval_x_toggled(self, checked: bool):
+        self.spin_x_eval.setEnabled(checked)
+        self.chk_tolerance.setEnabled(checked)
+        self.spin_tolerance.setEnabled(checked and self.chk_tolerance.isChecked())
+
+    def _on_tolerance_toggled(self, checked: bool):
+        self.spin_tolerance.setEnabled(checked and self.chk_eval_x.isChecked())
+
     def _on_adv_toggled(self, checked: bool):
         self.advanced_container.setVisible(checked)
         if hasattr(self, "box_adv"):
@@ -615,7 +641,9 @@ class TaylorOptionsDialog(QDialog):
             "xmin": self.spin_xmin.value(),
             "xmax": self.spin_xmax.value(),
             "adv": self.chk_advanced.isChecked(),
+            "eval_x": self.chk_eval_x.isChecked(),
             "x_eval": self.spin_x_eval.value(),
+            "use_tol": self.chk_tolerance.isChecked(),
             "tol": self.spin_tolerance.value(),
         }
         if hasattr(self, "box_adv"):
@@ -632,7 +660,9 @@ class TaylorOptionsDialog(QDialog):
             self.spin_xmin.setValue(self._backup["xmin"])
             self.spin_xmax.setValue(self._backup["xmax"])
             self.chk_advanced.setChecked(self._backup["adv"])
+            self.chk_eval_x.setChecked(self._backup.get("eval_x", True))
             self.spin_x_eval.setValue(self._backup["x_eval"])
+            self.chk_tolerance.setChecked(self._backup.get("use_tol", False))
             self.spin_tolerance.setValue(self._backup["tol"])
         super().reject()
 
@@ -699,6 +729,11 @@ class TaylorOptionsDialog(QDialog):
             QDoubleSpinBox:focus, QSpinBox:focus, QComboBox:focus {{
                 border-color: #2563eb;
             }}
+            QDoubleSpinBox:disabled, QSpinBox:disabled {{
+                background-color: {"#1e293b" if is_dark else "#f1f5f9"};
+                color: {"#64748b" if is_dark else "#94a3b8"};
+                border-color: {"#334155" if is_dark else "#cbd5e1"};
+            }}
             QComboBox QAbstractItemView {{
                 background-color: {input_bg};
                 color: {text_primary};
@@ -708,9 +743,12 @@ class TaylorOptionsDialog(QDialog):
             }}
             QCheckBox {{
                 background: transparent;
-                color: #2563eb;
+                color: {text_primary};
                 font-size: 11px;
                 font-weight: 600;
+            }}
+            QCheckBox:disabled {{
+                color: {text_secondary};
             }}
             QCheckBox::indicator {{
                 width: 16px;
@@ -722,6 +760,10 @@ class TaylorOptionsDialog(QDialog):
             QCheckBox::indicator:checked {{
                 background-color: #2563eb;
                 border-color: #2563eb;
+            }}
+            QCheckBox::indicator:disabled {{
+                background-color: {"#1e293b" if is_dark else "#f1f5f9"};
+                border-color: {"#334155" if is_dark else "#cbd5e1"};
             }}
             QPushButton {{
                 background-color: {btn_bg};
@@ -774,6 +816,8 @@ class SidebarPanel(QWidget):
         self.spin_xmin = self.options_dialog.spin_xmin
         self.spin_xmax = self.options_dialog.spin_xmax
         self.spin_x_eval = self.options_dialog.spin_x_eval
+        self.chk_eval_x = self.options_dialog.chk_eval_x
+        self.chk_tolerance = self.options_dialog.chk_tolerance
         self.spin_tolerance = self.options_dialog.spin_tolerance
         self.combo_tolerance = self.spin_tolerance
         self.combo_tolerance.currentData = lambda: self.get_selected_tolerance()
@@ -782,6 +826,8 @@ class SidebarPanel(QWidget):
 
         self.options_dialog.options_applied.connect(self._on_options_applied)
         self.chk_advanced.toggled.connect(self._on_advanced_toggled)
+        self.chk_eval_x.toggled.connect(self._on_eval_param_changed)
+        self.chk_tolerance.toggled.connect(self._on_eval_param_changed)
         self.spin_x_eval.valueChanged.connect(self._on_eval_param_changed)
         self.spin_tolerance.valueChanged.connect(self._on_eval_param_changed)
 
@@ -1057,14 +1103,31 @@ class SidebarPanel(QWidget):
 
         self.solve_requested.emit(func_str, x0, x_min, x_max, order)
 
+    def is_eval_point_enabled(self) -> bool:
+        if not self.chk_advanced.isChecked():
+            return False
+        if hasattr(self, "chk_eval_x"):
+            return self.chk_eval_x.isChecked()
+        return True
+
     def get_selected_tolerance(self) -> Optional[float]:
+        if not self.chk_advanced.isChecked():
+            return None
+        if hasattr(self, "chk_eval_x") and not self.chk_eval_x.isChecked():
+            return None
+        if hasattr(self, "chk_tolerance") and not self.chk_tolerance.isChecked():
+            return None
         val = self.spin_tolerance.value()
         return val if val > 0.0 else None
 
     def set_tolerance(self, tol: Optional[float]):
-        if tol is None:
+        if tol is None or tol <= 0:
+            if hasattr(self, "chk_tolerance"):
+                self.chk_tolerance.setChecked(False)
             self.spin_tolerance.setValue(0.0)
         else:
+            if hasattr(self, "chk_tolerance"):
+                self.chk_tolerance.setChecked(True)
             self.spin_tolerance.setValue(float(tol))
 
     def _open_options_dialog(self):
@@ -1086,17 +1149,24 @@ class SidebarPanel(QWidget):
         color = "#60a5fa" if self.is_dark_mode else "#2563eb"
         self.lbl_options_summary.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {color}; padding-left: 4px;")
         summary = f"x₀={x0:g} | n={order} | [{xmin:g}, {xmax:g}]"
-        if adv:
+        if adv and hasattr(self, "chk_eval_x") and self.chk_eval_x.isChecked():
             summary += f" | x*={self.spin_x_eval.value():g}"
+            if hasattr(self, "chk_tolerance") and self.chk_tolerance.isChecked():
+                summary += f" | tol={self.spin_tolerance.value():g}"
         self.lbl_options_summary.setText(summary)
 
     def _on_eval_param_changed(self):
-        self._update_evaluation_views()
+        is_active = self.is_eval_point_enabled()
+        if hasattr(self, "tabs") and hasattr(self.tabs, "setTabVisible"):
+            self.tabs.setTabVisible(2, is_active)
+        if is_active:
+            self._update_evaluation_views()
 
     def _on_advanced_toggled(self, checked: bool):
+        is_active = self.is_eval_point_enabled() if checked else False
         if hasattr(self, "tabs") and hasattr(self.tabs, "setTabVisible"):
-            self.tabs.setTabVisible(2, checked)
-        if checked and self.result is not None:
+            self.tabs.setTabVisible(2, is_active)
+        if is_active and self.result is not None:
             self._update_evaluation_views()
 
     def _update_evaluation_views(self):
@@ -1186,10 +1256,11 @@ class SidebarPanel(QWidget):
         self.lbl_final_expanded.setToolTip(ltx_exp)
 
         # 4. Actualizar visualización de la Parte b en su pestaña de Evaluación
-        self._update_evaluation_views()
-        is_adv = self.chk_advanced.isChecked()
+        is_eval = self.is_eval_point_enabled()
         if hasattr(self, "tabs") and hasattr(self.tabs, "setTabVisible"):
-            self.tabs.setTabVisible(2, is_adv)
+            self.tabs.setTabVisible(2, is_eval)
+        if is_eval:
+            self._update_evaluation_views()
 
     def select_order(self, order: Optional[int]):
         self.selected_order = order
@@ -1216,9 +1287,19 @@ class SidebarPanel(QWidget):
         self.spin_xmax.setValue(x_max)
         self.spin_order.setValue(order)
         if x_eval is not None:
+            if hasattr(self, "chk_eval_x"):
+                self.chk_eval_x.setChecked(True)
             self.spin_x_eval.setValue(x_eval)
+        else:
+            if hasattr(self, "chk_eval_x"):
+                self.chk_eval_x.setChecked(False)
+
         if tolerance is not None:
             self.set_tolerance(tolerance)
+        else:
+            if hasattr(self, "chk_tolerance"):
+                self.chk_tolerance.setChecked(False)
+
         if x_eval is not None or tolerance is not None:
             self.chk_advanced.setChecked(True)
         else:

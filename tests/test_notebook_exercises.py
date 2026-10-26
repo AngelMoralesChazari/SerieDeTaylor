@@ -228,4 +228,58 @@ def test_taylor_options_dialog_popup():
     assert "x*=1.75" in text
 
 
+def test_independent_eval_and_tolerance_checkboxes():
+    """
+    Verifica que las casillas de evaluación en x y tolerancia de error operen de forma independiente:
+    1. Evaluar en x activado pero Tolerancia desactivada:
+       - No aplica criterio de parada (best_order es None).
+       - spin_tolerance está deshabilitado.
+    2. Tolerancia activada:
+       - Aplica criterio y calcula best_order.
+    3. Evaluar en x desactivado:
+       - Deshabilita tanto el punto x como la tolerancia.
+    """
+    from PySide6.QtWidgets import QApplication
+    from ui.sidebar_panel import SidebarPanel
+    from taylor_engine import TaylorEngine
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+
+    panel = SidebarPanel()
+    engine = TaylorEngine()
+    res = engine.compute_series("ln(x)", x0=1.0, x_min=0.2, x_max=2.5, max_order=6)
+
+    # 1. Activar opciones avanzadas, pero solo Evaluar en x (Tolerancia desactivada)
+    panel.chk_advanced.setChecked(True)
+    panel.chk_eval_x.setChecked(True)
+    panel.chk_tolerance.setChecked(False)
+    panel.spin_x_eval.setValue(1.25)
+    panel.display_results(res)
+
+    assert panel.is_eval_point_enabled() is True
+    assert panel.get_selected_tolerance() is None
+    assert panel.spin_tolerance.isEnabled() is False
+    assert panel.whiteboard_widget_tab.eval_data["best_order"] is None
+
+    # 2. Activar tolerancia de error a 0.001
+    panel.chk_tolerance.setChecked(True)
+    panel.spin_tolerance.setValue(0.001)
+    panel._on_eval_param_changed()
+
+    assert panel.spin_tolerance.isEnabled() is True
+    assert panel.get_selected_tolerance() == 0.001
+    assert panel.whiteboard_widget_tab.eval_data["best_order"] == 4
+
+    # 3. Desactivar evaluar en x
+    panel.chk_eval_x.setChecked(False)
+    assert panel.is_eval_point_enabled() is False
+    assert panel.get_selected_tolerance() is None
+    assert panel.spin_x_eval.isEnabled() is False
+    assert panel.chk_tolerance.isEnabled() is False
+    assert panel.spin_tolerance.isEnabled() is False
+
+
+
 
