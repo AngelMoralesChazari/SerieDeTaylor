@@ -217,9 +217,9 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         self.ax.axhline(0, color=axis_color, linewidth=1.2, alpha=0.85)
         self.ax.axvline(0, color=axis_color, linewidth=1.2, alpha=0.85)
 
-        # Configurar vista centrada en (0, 0) con escala de 10 y unidades de 1 en 1
-        self.ax.set_xlim(-8.8, 8.8)
-        self.ax.set_ylim(-8.2, 10.5)
+        # Configurar vista centrada en (0, 0) con escala simétrica de -10 a 10 y unidades de 1 en 1
+        self.ax.set_xlim(-10.5, 10.5)
+        self.ax.set_ylim(-10.5, 10.5)
         self._update_locators()
 
     def set_dark_mode(self, is_dark: bool):
@@ -356,31 +356,31 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
     def auto_fit_view(self):
         """
         Ajusta la vista para que el plano cartesiano salga centrado en (0, 0)
-        con una escala hasta 10 y unidades de 1 en 1 como en GeoGebra (Imagen 1),
+        con una escala simétrica de -10 a 10 en ambos ejes (X e Y) y unidades de 1 en 1,
         permitiendo al usuario explorar con zoom in y zoom out con total naturalidad.
         """
         if self.taylor_result is None:
-            self.ax.set_xlim(-8.8, 8.8)
-            self.ax.set_ylim(-8.2, 10.5)
+            self.ax.set_xlim(-10.5, 10.5)
+            self.ax.set_ylim(-10.5, 10.5)
             self._update_locators()
             self.draw_idle()
             return
 
         res = self.taylor_result
 
-        # 1. Centrado en X: simétrico alrededor de x=0 con escala base de 10 (unidades de 1 en 1)
+        # 1. Centrado en X: simétrico alrededor de x=0 con escala base de -10 a 10 (unidades de 1 en 1)
         if res.x_min <= 0 <= res.x_max:
             half_x = max(abs(res.x_min), abs(res.x_max)) + 1.5
-            half_x = max(half_x, 8.8)
+            half_x = max(half_x, 10.5)
             self.ax.set_xlim(-half_x, half_x)
         else:
             cx = (res.x_min + res.x_max) / 2.0
             span_x = max(res.x_max - res.x_min, 6.0) + 3.0
-            span_x = max(span_x, 17.6)
+            span_x = max(span_x, 21.0)
             self.ax.set_xlim(cx - span_x / 2.0, cx + span_x / 2.0)
 
-        # 2. Centrado en Y con escala hasta 10 y unidades de 1 en 1 idéntica a la Imagen 1
-        self.ax.set_ylim(-8.2, 10.5)
+        # 2. Centrado en Y con escala simétrica de -10 a 10 y unidades de 1 en 1
+        self.ax.set_ylim(-10.5, 10.5)
         self._update_locators()
         self._refresh_curve_data(force=True)
         self.draw_idle()
