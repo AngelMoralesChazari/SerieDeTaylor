@@ -557,10 +557,16 @@ class TaylorOptionsDialog(QDialog):
         self.btn_apply.clicked.connect(self._on_apply_clicked)
         btn_layout.addWidget(self.btn_apply)
 
+        content_layout.addStretch(1)
         content_layout.addLayout(btn_layout)
 
     def _on_adv_toggled(self, checked: bool):
         self.advanced_container.setVisible(checked)
+        if hasattr(self, "box_adv"):
+            self.box_adv.adjustSize()
+        if hasattr(self, "root_frame"):
+            self.root_frame.adjustSize()
+        self.adjustSize()
 
     def open_dialog(self):
         self._backup = {
@@ -572,6 +578,11 @@ class TaylorOptionsDialog(QDialog):
             "x_eval": self.spin_x_eval.value(),
             "tol_idx": self.combo_tolerance.currentIndex(),
         }
+        if hasattr(self, "box_adv"):
+            self.box_adv.adjustSize()
+        if hasattr(self, "root_frame"):
+            self.root_frame.adjustSize()
+        self.adjustSize()
         self.exec()
 
     def reject(self):
