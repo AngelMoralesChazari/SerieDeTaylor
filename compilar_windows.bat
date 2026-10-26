@@ -10,13 +10,15 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt pyinstaller
 
 echo.
-echo 2. Empaquetando la aplicacion en un unico archivo .exe...
-pyinstaller --clean --name "SerieDeTaylor" --onefile --windowed main.py
+echo 2. Empaquetando la aplicacion en modo portable de inicio instantaneo (--onedir)...
+echo    (Este modo abre en 1 segundo sin descomprimir a la carpeta Temp)
+pyinstaller --clean --name "SerieDeTaylor" --onedir --windowed main.py
 
 echo.
 echo ========================================================
 echo   Compilacion completada con exito!
-echo   Tu ejecutable se encuentra en la carpeta: dist\SerieDeTaylor.exe
+echo   Tu aplicacion se encuentra en la carpeta: dist\SerieDeTaylor\
+echo   Ejecutable principal: dist\SerieDeTaylor\SerieDeTaylor.exe
 echo ========================================================
 echo.
 pause

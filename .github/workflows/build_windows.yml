@@ -25,12 +25,17 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      - name: Compilar aplicación a ejecutable .exe
+      - name: Compilar aplicación a ejecutable de inicio instantáneo (--onedir)
         run: |
-          pyinstaller --clean --name "SerieDeTaylor" --onefile --windowed main.py
+          pyinstaller --clean --name "SerieDeTaylor" --onedir --windowed main.py
 
-      - name: Subir ejecutable SerieDeTaylor.exe como artefacto descargable
+      - name: Comprimir paquete portable para descarga rápida
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/SerieDeTaylor -DestinationPath dist/SerieDeTaylor-Windows-Portable.zip
+
+      - name: Subir paquete SerieDeTaylor-Windows-Portable.zip
         uses: actions/upload-artifact@v4
         with:
-          name: SerieDeTaylor-Windows-x64
-          path: dist/SerieDeTaylor.exe
+          name: SerieDeTaylor-Windows-Portable
+          path: dist/SerieDeTaylor-Windows-Portable.zip
