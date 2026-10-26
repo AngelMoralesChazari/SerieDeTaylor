@@ -1,0 +1,36 @@
+name: Compilar Ejecutable para Windows
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: # Permite compilar manualmente con un clic en GitHub Actions
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Compilar aplicación a ejecutable .exe
+        run: |
+          pyinstaller --clean --name "SerieDeTaylor" --onefile --windowed main.py
+
+      - name: Subir ejecutable SerieDeTaylor.exe como artefacto descargable
+        uses: actions/upload-artifact@v4
+        with:
+          name: SerieDeTaylor-Windows-x64
+          path: dist/SerieDeTaylor.exe

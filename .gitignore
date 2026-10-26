@@ -5,3 +5,6 @@ __pycache__/
 *.pdf
 *.csv
 .DS_Store
+build/
+dist/
+*.spec
