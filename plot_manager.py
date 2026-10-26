@@ -197,6 +197,9 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
     def _setup_style(self):
         """Aplica la estética limpia de GeoGebra con cuadrícula suave y márgenes mínimos."""
+        self._cached_locator_x = None
+        self._cached_locator_y = None
+
         bg_color = "#18181b" if self.is_dark_mode else "#ffffff"
         fg_color = "#f4f4f5" if self.is_dark_mode else "#334155"
         grid_major = "#3f3f46" if self.is_dark_mode else "#e2e8f0"
@@ -245,16 +248,16 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
             fw = self.floating_nav.sizeHint().width()
             self.floating_nav.move(max(self.width() - fw - 14, 10), 14)
 
-    def update_data(self, result: TaylorSeriesResult, resolution: int = 600):
-        """Actualiza los datos matemáticos y renderiza las curvas."""
+    def update_data(self, result: TaylorSeriesResult, resolution: int = 1600):
+        """Actualiza los datos matemáticos y renderiza las curvas con alta resolución suave."""
         self.taylor_result = result
         self.selected_order = None
 
-        # Intervalo para la malla: cubrir ampliamente [x_min, x_max] y x0
-        x_start = min(result.x_min, result.x0 - 2.0)
-        x_end = max(result.x_max, result.x0 + 2.0)
+        # Intervalo para la malla: cubrir ampliamente [x_min, x_max], x0 y la vista base [-12, 12]
+        x_start = min(result.x_min, result.x0 - 2.0, -12.0)
+        x_end = max(result.x_max, result.x0 + 2.0, 12.0)
         span = x_end - x_start
-        x_pad = max(span * 0.25, 1.0)
+        x_pad = max(span * 0.25, 2.0)
 
         self.x_grid = np.linspace(x_start - x_pad, x_end + x_pad, resolution)
         raw_y = result.func_eval(self.x_grid)
@@ -269,6 +272,8 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
     def rebuild_plot(self):
         """Redibuja completamente el plano cartesiano."""
         self.ax.clear()
+        self._cached_locator_x = None
+        self._cached_locator_y = None
         self._setup_style()
         self._xlim_cid = self.ax.callbacks.connect("xlim_changed", self._on_xlim_changed)
         self.lines_poly.clear()
@@ -396,7 +401,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
     def _update_locators(self):
         """
-        Mantiene los ejes y la cuadrícula en unidades de 1 en 1 sin saltos de 2, 4 o 5,
+        Mantiene los ejes y la cuadrícula en unidades de 1 en 1 sin saltos de 2.5, 4 o 5,
         optimizando drásticamente el rendimiento con caché para evitar resetear ticks en cada evento.
         """
         cur_xlim = self.ax.get_xlim()
@@ -404,12 +409,14 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         sx = abs(cur_xlim[1] - cur_xlim[0])
         sy = abs(cur_ylim[1] - cur_ylim[0])
 
-        # Determinar intervalos óptimos para Eje X
-        if sx > 70:
-            maj_x, min_x = None, None
-        elif sx > 35:
+        # Determinar intervalos limpios para Eje X (estricto de 1 en 1 en vista normal)
+        if sx > 120:
+            maj_x, min_x = 20.0, 5.0
+        elif sx > 60:
+            maj_x, min_x = 10.0, 2.0
+        elif sx > 32:
             maj_x, min_x = 2.0, 0.5
-        elif sx < 2.0:
+        elif sx < 1.8:
             maj_x, min_x = 0.2, 0.05
         elif sx < 4.0:
             maj_x, min_x = 0.5, 0.1
@@ -418,19 +425,18 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
         if (maj_x, min_x) != self._cached_locator_x:
             self._cached_locator_x = (maj_x, min_x)
-            if maj_x is None:
-                self.ax.xaxis.set_major_locator(AutoLocator())
-            else:
-                self.ax.xaxis.set_major_locator(MultipleLocator(maj_x))
-                if min_x is not None:
-                    self.ax.xaxis.set_minor_locator(MultipleLocator(min_x))
+            self.ax.xaxis.set_major_locator(MultipleLocator(maj_x))
+            if min_x is not None:
+                self.ax.xaxis.set_minor_locator(MultipleLocator(min_x))
 
-        # Determinar intervalos óptimos para Eje Y
-        if sy > 70:
-            maj_y, min_y = None, None
-        elif sy > 35:
+        # Determinar intervalos limpios para Eje Y (estricto de 1 en 1 en vista normal)
+        if sy > 120:
+            maj_y, min_y = 20.0, 5.0
+        elif sy > 60:
+            maj_y, min_y = 10.0, 2.0
+        elif sy > 32:
             maj_y, min_y = 2.0, 0.5
-        elif sy < 2.0:
+        elif sy < 1.8:
             maj_y, min_y = 0.2, 0.05
         elif sy < 4.0:
             maj_y, min_y = 0.5, 0.1
@@ -439,12 +445,9 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
         if (maj_y, min_y) != self._cached_locator_y:
             self._cached_locator_y = (maj_y, min_y)
-            if maj_y is None:
-                self.ax.yaxis.set_major_locator(AutoLocator())
-            else:
-                self.ax.yaxis.set_major_locator(MultipleLocator(maj_y))
-                if min_y is not None:
-                    self.ax.yaxis.set_minor_locator(MultipleLocator(min_y))
+            self.ax.yaxis.set_major_locator(MultipleLocator(maj_y))
+            if min_y is not None:
+                self.ax.yaxis.set_minor_locator(MultipleLocator(min_y))
 
     def _on_xlim_changed(self, event_ax=None):
         """Callback invocado por Matplotlib cuando cambian los límites horizontales."""
@@ -462,8 +465,8 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
     def _refresh_curve_data(self, force: bool = False):
         """
-        Evalúa y extiende dinámicamente las curvas sobre el viewport visible actual (más amplio margen).
-        Optimizado para cero costo de CPU durante arrastres (pan) y navegación en tiempo real.
+        Evalúa y extiende dinámicamente las curvas sobre el viewport visible actual con alta densidad de puntos.
+        Curvas ultra suaves y limpias a cualquier nivel de zoom con cero costo de CPU durante arrastres (pan).
         """
         if self.taylor_result is None or self._updating_curves:
             return
@@ -477,24 +480,24 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         if not np.isfinite(span) or span <= 1e-9:
             return
 
-        # Comprobar si la malla actual ya cubre ampliamente la vista con buena resolución
-        if not force and self.x_grid is not None and len(self.x_grid) >= 200:
+        # Comprobar si la malla actual ya cubre ampliamente la vista con alta resolución
+        if not force and self.x_grid is not None and len(self.x_grid) >= 400:
             grid_min = float(self.x_grid[0])
             grid_max = float(self.x_grid[-1])
-            # Si el área visible está ampliamente cubierta con margen
-            if grid_min <= (x_vis_min - 0.35 * span) and grid_max >= (x_vis_max + 0.35 * span):
+            # Si el área visible está cubierta con margen y con al menos 600 puntos visibles
+            if grid_min <= (x_vis_min - 0.2 * span) and grid_max >= (x_vis_max + 0.2 * span):
                 pts_in_view = int(np.count_nonzero((self.x_grid >= x_vis_min) & (self.x_grid <= x_vis_max)))
-                if 200 <= pts_in_view <= 1600:
+                if pts_in_view >= 600:
                     return
 
         self._updating_curves = True
         try:
-            # Margen amplio (2.5x span) para permitir arrastres fluidos sin recalcular
-            pad = max(span * 2.5, 25.0)
+            # Margen cómodo (0.5x span) para permitir arrastres sin ver cortes
+            pad = max(span * 0.5, 1.5)
             x_start = x_vis_min - pad
             x_end = x_vis_max + pad
 
-            resolution = 800
+            resolution = 1600
             new_x = np.linspace(x_start, x_end, resolution)
             res = self.taylor_result
 
@@ -532,7 +535,8 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         new_h = (cur_ylim[1] - cur_ylim[0]) * factor
         self.ax.set_xlim(cx - new_w / 2.0, cx + new_w / 2.0)
         self.ax.set_ylim(cy - new_h / 2.0, cy + new_h / 2.0)
-        self._refresh_curve_data()
+        self._update_locators()
+        self._refresh_curve_data(force=True)
         self.draw_idle()
 
     def show_exact_intersection_point(self, x_val: Optional[Union[float, bool]] = None):
@@ -582,6 +586,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         dy = (cur_ylim[1] - cur_ylim[0]) * dy_ratio
         self.ax.set_xlim(cur_xlim[0] + dx, cur_xlim[1] + dx)
         self.ax.set_ylim(cur_ylim[0] + dy, cur_ylim[1] + dy)
+        self._update_locators()
         self._refresh_curve_data()
         self.draw_idle()
 
