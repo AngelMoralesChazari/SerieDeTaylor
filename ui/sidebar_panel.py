@@ -7,6 +7,7 @@ y el desglose analítico paso a paso idéntico al cuaderno de ejercicios (Imagen
 
 from __future__ import annotations
 
+import re
 from typing import Optional, Dict, List, Any
 import numpy as np
 from PySide6.QtWidgets import (
@@ -16,7 +17,7 @@ from PySide6.QtWidgets import (
     QDialog
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtGui import QColor, QPixmap, QValidator
 
 from taylor_engine import TaylorSeriesResult, TaylorOrderStep
 from latex_renderer import GLOBAL_LATEX_RENDERER
@@ -418,6 +419,45 @@ class WhiteboardConvergenceWidget(QFrame):
         self.layout_main.addWidget(btn_inspect)
 
 
+class ScientificDoubleSpinBox(QDoubleSpinBox):
+    """
+    QDoubleSpinBox que permite ingresar valores numéricos libres tanto en notación decimal
+    estándar (usando punto '.' o coma ',' como separador) como en notación científica (ej: 1e-3, 1e-4).
+    """
+    def validate(self, text: str, pos: int):
+        if self.specialValueText() and text == self.specialValueText():
+            return (QValidator.State.Acceptable, text, pos)
+        norm = text.replace(",", ".").strip()
+        if not norm or norm in ("-", "+", ".", "0.", "0,") or re.match(r"^[+-]?\d*\.?\d*[eE]?[+-]?\d*$", norm):
+            try:
+                val = float(norm)
+                if self.minimum() <= val <= self.maximum():
+                    return (QValidator.State.Acceptable, text, pos)
+            except ValueError:
+                pass
+            return (QValidator.State.Intermediate, text, pos)
+        return (QValidator.State.Invalid, text, pos)
+
+    def valueFromText(self, text: str) -> float:
+        if self.specialValueText() and text == self.specialValueText():
+            return self.minimum()
+        norm = text.replace(",", ".").strip()
+        try:
+            return float(norm)
+        except ValueError:
+            return 0.0
+
+    def textFromValue(self, val: float) -> str:
+        if val == self.minimum() and self.specialValueText():
+            return self.specialValueText()
+        if val == 0:
+            return "0"
+        if 0 < val < 1e-6:
+            return f"{val:.6g}"
+        s = f"{val:.6f}".rstrip("0").rstrip(".")
+        return s if s else "0"
+
+
 class TaylorOptionsDialog(QDialog):
     """
     Diálogo modal pop-up estilo GeoGebra para configurar los parámetros de la Serie de Taylor:
@@ -529,13 +569,13 @@ class TaylorOptionsDialog(QDialog):
         lay_adv_grid.addWidget(self.spin_x_eval, 0, 1)
 
         lay_adv_grid.addWidget(QLabel("Tolerancia error:"), 1, 0)
-        self.combo_tolerance = QComboBox()
-        self.combo_tolerance.addItem("10⁻³ (0.001) [Pizarrón]", 0.001)
-        self.combo_tolerance.addItem("10⁻⁴ (0.0001) [Pizarrón]", 0.0001)
-        self.combo_tolerance.addItem("10⁻² (0.01)", 0.01)
-        self.combo_tolerance.addItem("10⁻⁵ (0.00001)", 0.00001)
-        self.combo_tolerance.addItem("Sin límite", None)
-        lay_adv_grid.addWidget(self.combo_tolerance, 1, 1)
+        self.spin_tolerance = ScientificDoubleSpinBox()
+        self.spin_tolerance.setRange(0.0, 10.0)
+        self.spin_tolerance.setDecimals(8)
+        self.spin_tolerance.setSingleStep(0.0005)
+        self.spin_tolerance.setValue(0.001)
+        self.spin_tolerance.setSpecialValueText("Sin límite (0)")
+        lay_adv_grid.addWidget(self.spin_tolerance, 1, 1)
 
         self.advanced_container.setVisible(False)
         lay_adv.addWidget(self.advanced_container)
@@ -576,7 +616,7 @@ class TaylorOptionsDialog(QDialog):
             "xmax": self.spin_xmax.value(),
             "adv": self.chk_advanced.isChecked(),
             "x_eval": self.spin_x_eval.value(),
-            "tol_idx": self.combo_tolerance.currentIndex(),
+            "tol": self.spin_tolerance.value(),
         }
         if hasattr(self, "box_adv"):
             self.box_adv.adjustSize()
@@ -593,7 +633,7 @@ class TaylorOptionsDialog(QDialog):
             self.spin_xmax.setValue(self._backup["xmax"])
             self.chk_advanced.setChecked(self._backup["adv"])
             self.spin_x_eval.setValue(self._backup["x_eval"])
-            self.combo_tolerance.setCurrentIndex(self._backup["tol_idx"])
+            self.spin_tolerance.setValue(self._backup["tol"])
         super().reject()
 
     def _on_apply_clicked(self):
@@ -734,12 +774,16 @@ class SidebarPanel(QWidget):
         self.spin_xmin = self.options_dialog.spin_xmin
         self.spin_xmax = self.options_dialog.spin_xmax
         self.spin_x_eval = self.options_dialog.spin_x_eval
-        self.combo_tolerance = self.options_dialog.combo_tolerance
+        self.spin_tolerance = self.options_dialog.spin_tolerance
+        self.combo_tolerance = self.spin_tolerance
+        self.combo_tolerance.currentData = lambda: self.get_selected_tolerance()
         self.chk_advanced = self.options_dialog.chk_advanced
         self.advanced_container = self.options_dialog.advanced_container
 
         self.options_dialog.options_applied.connect(self._on_options_applied)
         self.chk_advanced.toggled.connect(self._on_advanced_toggled)
+        self.spin_x_eval.valueChanged.connect(self._on_eval_param_changed)
+        self.spin_tolerance.valueChanged.connect(self._on_eval_param_changed)
 
         self._init_ui()
 
@@ -1014,17 +1058,14 @@ class SidebarPanel(QWidget):
         self.solve_requested.emit(func_str, x0, x_min, x_max, order)
 
     def get_selected_tolerance(self) -> Optional[float]:
-        return self.combo_tolerance.currentData()
+        val = self.spin_tolerance.value()
+        return val if val > 0.0 else None
 
     def set_tolerance(self, tol: Optional[float]):
         if tol is None:
-            self.combo_tolerance.setCurrentIndex(self.combo_tolerance.count() - 1)
-            return
-        for idx in range(self.combo_tolerance.count()):
-            val = self.combo_tolerance.itemData(idx)
-            if val is not None and abs(val - tol) < 1e-9:
-                self.combo_tolerance.setCurrentIndex(idx)
-                return
+            self.spin_tolerance.setValue(0.0)
+        else:
+            self.spin_tolerance.setValue(float(tol))
 
     def _open_options_dialog(self):
         self.options_dialog.open_dialog()
@@ -1032,6 +1073,7 @@ class SidebarPanel(QWidget):
     def _on_options_applied(self):
         self._update_options_summary()
         self._on_advanced_toggled(self.chk_advanced.isChecked())
+        self._on_eval_param_changed()
 
     def _update_options_summary(self):
         if not hasattr(self, "spin_x0") or not hasattr(self, "lbl_options_summary"):
