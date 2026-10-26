@@ -141,16 +141,17 @@ class GeoGebraVirtualKeyboard(QFrame):
 
                 # Estilos visuales acordes a GeoGebra
                 if text in ("7", "8", "9", "4", "5", "6", "1", "2", "3", "0", "."):
-                    btn.setStyleSheet("font-size: 14px; font-weight: 600;")
+                    btn.setStyleSheet("font-size: 17px; font-weight: 600;")
                 elif text in ("×", "÷", "+", "−", "="):
-                    btn.setStyleSheet("font-size: 15px; font-weight: 700; color: #2563eb;")
+                    btn.setStyleSheet("font-size: 18px; font-weight: 700; color: #2563eb;")
                 elif text == "↵":
-                    btn.setStyleSheet("font-size: 15px; font-weight: 700; background-color: #2563eb; color: #ffffff;")
+                    btn.setStyleSheet("font-size: 18px; font-weight: 700; background-color: #2563eb; color: #ffffff;")
                 elif text == "frac":
                     btn.setText("a/b")
-                    btn.setStyleSheet("font-size: 12px; font-weight: 700; color: #2563eb;")
+                    btn.setStyleSheet("font-size: 14px; font-weight: 700; color: #2563eb;")
                 else:
-                    btn.setStyleSheet("font-size: 13px; font-weight: 500;")
+                    btn.setStyleSheet("font-size: 15px; font-weight: 500;")
+
 
                 btn.clicked.connect(lambda checked=False, act=action: self._handle_key(act))
                 grid.addWidget(btn, r_idx, c_idx)
@@ -176,7 +177,7 @@ class GeoGebraVirtualKeyboard(QFrame):
                 btn = QPushButton(text)
                 btn.setFixedHeight(34)
                 btn.setMinimumWidth(55)
-                btn.setStyleSheet("font-size: 12px; font-weight: 600; color: #2563eb;")
+                btn.setStyleSheet("font-size: 14px; font-weight: 600; color: #2563eb;")
                 btn.clicked.connect(lambda checked=False, act=action: self._handle_key(act))
                 grid.addWidget(btn, r_idx, c_idx)
 
