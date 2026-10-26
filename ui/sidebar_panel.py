@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QDialog
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPixmap, QValidator
+from PySide6.QtGui import QColor, QPixmap, QValidator, QFont
 
 from taylor_engine import TaylorSeriesResult, TaylorOrderStep
 from latex_renderer import GLOBAL_LATEX_RENDERER
@@ -103,7 +103,7 @@ class GeoGebraAlgebraCard(QFrame):
     def update_latex(self, latex_str: str):
         color = "#f8fafc" if self.is_dark_mode else "#0f172a"
         try:
-            px = GLOBAL_LATEX_RENDERER.render_to_pixmap(latex_str, font_size=9.5, color_hex=color)
+            px = GLOBAL_LATEX_RENDERER.render_to_pixmap(latex_str, font_size=11, color_hex=color)
             if not px.isNull():
                 self.lbl_latex.setPixmap(px)
             else:
@@ -212,7 +212,7 @@ class NotebookStepWidget(QFrame):
 
         lbl_img = QLabel()
         try:
-            px = GLOBAL_LATEX_RENDERER.render_to_pixmap(latex_str, font_size=9.5, color_hex=text_color)
+            px = GLOBAL_LATEX_RENDERER.render_to_pixmap(latex_str, font_size=10.5, color_hex=text_color)
             if not px.isNull():
                 lbl_img.setPixmap(px)
             else:
@@ -298,7 +298,7 @@ class WhiteboardConvergenceWidget(QFrame):
         h_layout.setSpacing(2)
 
         clean_prefix = func_prefix.replace("\\", "")
-        title_lbl = QLabel(f"Parte b) Evaluación de {clean_prefix} e Iteraciones de Error")
+        title_lbl = QLabel(f"Evaluación de {clean_prefix} e Iteraciones de Error")
         title_lbl.setStyleSheet("font-weight: 800; font-size: 11.5px; color: #10b981;")
         h_layout.addWidget(title_lbl)
 
@@ -373,7 +373,7 @@ class WhiteboardConvergenceWidget(QFrame):
             # Render de la fórmula de sustitución en LaTeX
             lbl_math = QLabel()
             try:
-                px = GLOBAL_LATEX_RENDERER.render_to_pixmap(formula_ltx, font_size=9.5, color_hex=txt_color)
+                px = GLOBAL_LATEX_RENDERER.render_to_pixmap(formula_ltx, font_size=10.5, color_hex=txt_color)
                 if not px.isNull():
                     lbl_math.setPixmap(px)
                 else:
@@ -408,7 +408,7 @@ class WhiteboardConvergenceWidget(QFrame):
             sub_layout = QHBoxLayout(sub_frame)
             sub_layout.setContentsMargins(8, 4, 8, 4)
             lbl_sub = QLabel(resta_text)
-            lbl_sub.setStyleSheet(f"font-size: 10.5px; font-weight: 700; color: {sub_fg};")
+            lbl_sub.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {sub_fg};")
             sub_layout.addWidget(lbl_sub)
             card_layout.addWidget(sub_frame)
 
@@ -867,17 +867,29 @@ class SidebarPanel(QWidget):
         lbl_title.setStyleSheet("font-weight: 700; font-size: 12px; color: #2563eb;")
         in_layout.addWidget(lbl_title)
 
-        # Entrada de f(x)
-        in_layout.addWidget(QLabel("Función f(x):"))
+        # Entrada de f(x) (Mayor tamaño para óptima legibilidad)
+        lbl_fx_title = QLabel("Función f(x):")
+        lbl_fx_title.setStyleSheet("font-weight: 600; font-size: 12px;")
+        in_layout.addWidget(lbl_fx_title)
+
         self.input_fx = QLineEdit("x^4 - 3x^2 + 1")
+        self.input_fx.setObjectName("input_fx")
+        self.input_fx.setFixedHeight(38)
+        font_fx = self.input_fx.font()
+        font_fx.setPointSize(20)
+        font_fx.setWeight(QFont.DemiBold)
+        self.input_fx.setFont(font_fx)
         self.input_fx.setPlaceholderText("Ej: x^4 - 3x^2 + 1, exp(x), sin(x)")
         self.input_fx.textChanged.connect(self._on_fx_text_changed)
         self.input_fx.returnPressed.connect(self._on_solve_clicked)
         in_layout.addWidget(self.input_fx)
 
-        # Previsualización LaTeX inmediata (Imagen 5)
+        # Previsualización LaTeX inmediata en Computer Modern (Imagen 2)
         self.lbl_preview_fx = QLabel()
-        self.lbl_preview_fx.setStyleSheet("min-height: 26px; padding: 2px;")
+        self.lbl_preview_fx.setObjectName("lbl_preview_fx")
+        self.lbl_preview_fx.setMinimumHeight(44)
+        self.lbl_preview_fx.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.lbl_preview_fx.setStyleSheet("min-height: 44px; padding: 2px 4px;")
         in_layout.addWidget(self.lbl_preview_fx)
         self._update_fx_preview("x^4 - 3x^2 + 1")
 
@@ -1042,7 +1054,7 @@ class SidebarPanel(QWidget):
         self.scroll_eval.setWidget(eval_container)
         eval_layout.addWidget(self.scroll_eval)
 
-        self.tabs.addTab(self.tab_eval, "Evaluación (Parte b)")
+        self.tabs.addTab(self.tab_eval, "Evaluación")
 
         # Ocultar pestaña de Evaluación a primera vista hasta activar "Opciones adicionales"
         if hasattr(self.tabs, "setTabVisible"):
@@ -1091,7 +1103,7 @@ class SidebarPanel(QWidget):
             from math_engine import parse_math_expression, expr_to_latex
             expr = parse_math_expression(text)
             ltx = f"f(x) = {expr_to_latex(expr)}"
-            px = GLOBAL_LATEX_RENDERER.render_to_pixmap(ltx, font_size=11, color_hex=color)
+            px = GLOBAL_LATEX_RENDERER.render_to_pixmap(ltx, font_size=14, color_hex=color, dpi=160)
             if not px.isNull():
                 self.lbl_preview_fx.setPixmap(px)
         except Exception:
@@ -1254,7 +1266,7 @@ class SidebarPanel(QWidget):
         txt_color = "#f8fafc" if self.is_dark_mode else "#0f172a"
 
         ltx_taylor = f"f(x) \\approx {result.constructed_taylor_formula_latex}"
-        px_t = GLOBAL_LATEX_RENDERER.render_to_pixmap(ltx_taylor, font_size=9.5, color_hex=txt_color)
+        px_t = GLOBAL_LATEX_RENDERER.render_to_pixmap(ltx_taylor, font_size=10.5, color_hex=txt_color)
         if not px_t.isNull():
             self.lbl_final_taylor.setPixmap(px_t)
         else:
@@ -1262,7 +1274,7 @@ class SidebarPanel(QWidget):
         self.lbl_final_taylor.setToolTip(ltx_taylor)
 
         ltx_exp = f"\\text{{Expandida: }} P_{{{result.max_order}}}(x) = {result.expanded_formula_latex}"
-        px_e = GLOBAL_LATEX_RENDERER.render_to_pixmap(ltx_exp, font_size=9.0, color_hex="#64748b")
+        px_e = GLOBAL_LATEX_RENDERER.render_to_pixmap(ltx_exp, font_size=9.5, color_hex="#64748b")
         if not px_e.isNull():
             self.lbl_final_expanded.setPixmap(px_e)
         else:

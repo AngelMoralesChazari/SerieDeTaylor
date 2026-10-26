@@ -11,6 +11,9 @@ from typing import Dict, Tuple, Optional
 import matplotlib
 # Configurar backend agg seguro
 matplotlib.use("Agg")
+# Configurar tipografía matemática Computer Modern idéntica a LaTeX clásico (Imagen 2)
+matplotlib.rcParams["mathtext.fontset"] = "cm"
+matplotlib.rcParams["font.family"] = "serif"
 import matplotlib.pyplot as plt
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtCore import Qt

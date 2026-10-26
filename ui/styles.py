@@ -148,6 +148,23 @@ def get_application_stylesheet(is_dark: bool = False) -> str:
         border: 1.5px solid {border_focus};
     }}
 
+    /* Campo de entrada principal f(x) con mayor tamaño y nitidez */
+    QLineEdit#input_fx {{
+        min-height: 38px;
+        font-size: 20px;
+        font-weight: 600;
+        padding: 4px 10px;
+    }}
+
+    QLineEdit#input_fx:focus {{
+        border: 2px solid {border_focus};
+    }}
+
+    QLabel#lbl_preview_fx {{
+        min-height: 44px;
+        padding: 2px 4px;
+    }}
+
     /* Pestañas estilo GeoGebra */
     QTabWidget::pane {{
         border: 1px solid {border_color};
