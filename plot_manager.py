@@ -19,9 +19,12 @@ from matplotlib.lines import Line2D
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.ticker import MultipleLocator, AutoLocator
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QPushButton, QSizePolicy
-from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QRectF
-from PySide6.QtGui import QColor, QPainter, QPixmap
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QPushButton, QSizePolicy,
+    QPinchGesture, QGestureEvent
+)
+from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QRectF, QEvent
+from PySide6.QtGui import QColor, QPainter, QPixmap, QNativeGestureEvent, QInputDevice
 
 from taylor_engine import TaylorSeriesResult, TaylorOrderStep
 from math_engine import clean_asymptotes
@@ -200,8 +203,10 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         self.floating_nav = GraphFloatingNavWidget(self, is_dark_mode=self.is_dark_mode, parent=self)
         self.floating_nav.show()
 
-        # Cursor de mano abierta estilo GeoGebra
+        # Cursor de mano abierta estilo GeoGebra y gestos táctiles de trackpad
         self.setCursor(Qt.OpenHandCursor)
+        self.grabGesture(Qt.PinchGesture)
+        self.setAttribute(Qt.WA_AcceptTouchEvents, True)
 
     def _setup_style(self):
         """Aplica la estética limpia de GeoGebra con cuadrícula suave y márgenes mínimos."""
@@ -586,12 +591,107 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         self._refresh_curve_data()
         self.draw_idle()
 
-    # --- INTERACCIÓN DIRECTA CON EL RATÓN: PAN (ARRASTRE) Y ZOOM ---
+    # --- INTERACCIÓN DIRECTA: GESTOS TÁCTILES (TRACKPAD), PAN Y ZOOM ---
 
-    # --- INTERACCIÓN DIRECTA CON EL RATÓN: PAN (ARRASTRE) Y ZOOM ---
+    def event(self, event):
+        """Captura gestos táctiles nativos del trackpad (abrir/cerrar dedos para zoom)."""
+        if event.type() == QEvent.NativeGesture:
+            if self._handle_native_gesture(event):
+                return True
+        elif event.type() == QEvent.Gesture:
+            if self._handle_gesture(event):
+                return True
+        return super().event(event)
+
+    def _handle_native_gesture(self, event: QNativeGestureEvent) -> bool:
+        """Procesa gestos nativos de trackpad (Windows Precision Touchpad, macOS, Linux)."""
+        g_type = event.gestureType()
+        if g_type == Qt.NativeGestureType.ZoomNativeGesture:
+            # Gesto de pellizco en trackpad: abrir dedos (positivo -> zoom in), cerrar dedos (negativo -> zoom out)
+            val = event.value()
+            if abs(val) > 1e-5:
+                scale = 1.0 / max(1.0 + val * 2.2, 0.05)
+                pos = event.position()
+                self._apply_zoom_at_pos(pos, scale)
+            event.accept()
+            return True
+        elif g_type == Qt.NativeGestureType.PanNativeGesture:
+            # Gesto de paneo nativo con dos dedos
+            delta = event.delta() if hasattr(event, "delta") else None
+            if delta and (abs(delta.x()) > 0.01 or abs(delta.y()) > 0.01):
+                self._pan_by_pixels(delta.x(), delta.y())
+                event.accept()
+                return True
+        return False
+
+    def _handle_gesture(self, event: QGestureEvent) -> bool:
+        """Procesa gestos de pellizco estándar (touchscreens y trackpads compatibles)."""
+        pinch = event.gesture(Qt.PinchGesture)
+        if pinch:
+            if pinch.state() == Qt.GestureState.GestureUpdated:
+                sf = pinch.scaleFactor()
+                if sf > 0 and abs(sf - 1.0) > 1e-4:
+                    scale = 1.0 / sf
+                    pos = pinch.centerPoint()
+                    self._apply_zoom_at_pos(pos, scale)
+            elif pinch.state() in (Qt.GestureState.GestureFinished, Qt.GestureState.GestureCanceled):
+                self._update_locators()
+                self._refresh_curve_data(force=False)
+                self.draw()
+            event.accept()
+            return True
+        return False
+
+    def _apply_zoom_at_pos(self, pos, scale: float):
+        """Aplica zoom fluido centrado exactamente en la posición del puntero o centro del pellizco."""
+        inv = self.ax.transData.inverted()
+        mpl_x = pos.x()
+        mpl_y = self.figure.bbox.height - pos.y()
+        try:
+            xdata, ydata = inv.transform((mpl_x, mpl_y))
+        except Exception:
+            cur_xlim = self.ax.get_xlim()
+            cur_ylim = self.ax.get_ylim()
+            xdata = (cur_xlim[0] + cur_xlim[1]) / 2.0
+            ydata = (cur_ylim[0] + cur_ylim[1]) / 2.0
+
+        cur_xlim = self.ax.get_xlim()
+        cur_ylim = self.ax.get_ylim()
+        new_w = (cur_xlim[1] - cur_xlim[0]) * scale
+        new_h = (cur_ylim[1] - cur_ylim[0]) * scale
+
+        relx = (cur_xlim[1] - xdata) / max(cur_xlim[1] - cur_xlim[0], 1e-9)
+        rely = (cur_ylim[1] - ydata) / max(cur_ylim[1] - cur_ylim[0], 1e-9)
+
+        self.ax.set_xlim([xdata - new_w * (1 - relx), xdata + new_w * relx])
+        self.ax.set_ylim([ydata - new_h * (1 - rely), ydata + new_h * rely])
+        # Mantener estrictamente los locators limpios de 1 en 1 sin saltar a 5 en 5
+        self._update_locators()
+        self.draw_idle()
+
+        # Temporizador para finalizar el zoom y sincronizar curvas con máxima precisión
+        self._wheel_timer.start(120)
+
+    def _pan_by_pixels(self, dx_pixels: float, dy_pixels: float):
+        """Desplaza suavemente la vista con dos dedos en el trackpad."""
+        bbox = self.ax.bbox
+        cur_xlim = self.ax.get_xlim()
+        cur_ylim = self.ax.get_ylim()
+        x_span = cur_xlim[1] - cur_xlim[0]
+        y_span = cur_ylim[1] - cur_ylim[0]
+
+        dx_data = dx_pixels * (x_span / max(bbox.width, 1.0)) * 0.75
+        dy_data = dy_pixels * (y_span / max(bbox.height, 1.0)) * 0.75
+
+        self.ax.set_xlim(cur_xlim[0] - dx_data, cur_xlim[1] - dx_data)
+        self.ax.set_ylim(cur_ylim[0] + dy_data, cur_ylim[1] + dy_data)
+        self._update_locators()
+        self.draw_idle()
+
+        self._wheel_timer.start(120)
 
     def mousePressEvent(self, event):
-        """Inicia el desplazamiento fluido (pan) continuo a 50-60 FPS."""
+        """Inicia el desplazamiento fluido (pan) continuo con botón del ratón manteniendo escala de 1 en 1."""
         if event.button() in (Qt.LeftButton, Qt.MiddleButton, Qt.RightButton):
             self._is_panning = True
             self._has_dragged = False
@@ -602,12 +702,8 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
             mpl_y = self.figure.bbox.height - pos.y()
             self.ax.start_pan(pos.x(), mpl_y, 1)
 
-            # Optimización interactiva: pausar ticks secundarios y usar paso mayor durante el arrastre
-            self.ax.minorticks_off()
-            sx = abs(self.ax.get_xlim()[1] - self.ax.get_xlim()[0])
-            step = 5.0 if sx >= 15 else (2.0 if sx >= 5 else 1.0)
-            self.ax.xaxis.set_major_locator(MultipleLocator(step))
-            self.ax.yaxis.set_major_locator(MultipleLocator(step))
+            # MANTENER SIEMPRE LA ESCALA ESTRICTA DE 1 EN 1 (sin saltos a 5 en 5)
+            self._update_locators()
 
             self.setCursor(Qt.ClosedHandCursor)
             event.accept()
@@ -615,7 +711,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        """Desplaza el lienzo en tiempo real a 50-60 FPS fluidos sin saturar la cola de eventos."""
+        """Desplaza el lienzo en tiempo real a 50-60 FPS fluidos manteniendo la escala de 1 en 1."""
         if self._is_panning and self._press_coord is not None:
             pos = event.position() if hasattr(event, "position") else event.pos()
             dx = pos.x() - self._press_coord[0]
@@ -660,52 +756,38 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event):
-        """Zoom fluido continuo centrado exactamente en el puntero del ratón a 60-100 FPS."""
-        angle = event.angleDelta().y()
-        if angle == 0:
+        """
+        Manejo inteligente de trackpad y rueda:
+        - Si se presiona Ctrl + rueda/deslizamiento: Realiza zoom centrado en el cursor.
+        - Deslizamiento con dos dedos en trackpad (arriba/abajo o lados sin Ctrl): DESPLAZA (pan) el plano cartesiano.
+        - El zoom gestual principal se realiza abriendo o cerrando los dedos en el trackpad (pinch-to-zoom).
+        """
+        has_ctrl = bool(event.modifiers() & Qt.ControlModifier)
+
+        if has_ctrl:
+            angle = event.angleDelta().y()
+            if angle != 0:
+                scale_step = 0.88 if angle > 0 else 1.14
+                pos = event.position() if hasattr(event, "position") else event.pos()
+                self._apply_zoom_at_pos(pos, scale_step)
+            event.accept()
             return
-        scale_step = 0.85 if angle > 0 else 1.18
 
-        pos = event.position() if hasattr(event, "position") else event.pos()
-        inv = self.ax.transData.inverted()
-        mpl_x = pos.x()
-        mpl_y = self.figure.bbox.height - pos.y()
-        try:
-            xdata, ydata = inv.transform((mpl_x, mpl_y))
-        except Exception:
-            cur_xlim = self.ax.get_xlim()
-            cur_ylim = self.ax.get_ylim()
-            xdata = (cur_xlim[0] + cur_xlim[1]) / 2.0
-            ydata = (cur_ylim[0] + cur_ylim[1]) / 2.0
+        # Dos dedos en trackpad: desplazan la vista continuamente (paneo) en lugar de hacer zoom inesperado
+        if event.hasPixelDelta():
+            dx_px = float(event.pixelDelta().x())
+            dy_px = float(event.pixelDelta().y())
+        else:
+            dx_px = float(event.angleDelta().x()) / 4.0
+            dy_px = float(event.angleDelta().y()) / 4.0
 
-        if not self._is_zooming:
-            self._is_zooming = True
-            self.ax.minorticks_off()
-            sx = abs(self.ax.get_xlim()[1] - self.ax.get_xlim()[0])
-            step = 5.0 if sx >= 15 else (2.0 if sx >= 5 else 1.0)
-            self.ax.xaxis.set_major_locator(MultipleLocator(step))
-            self.ax.yaxis.set_major_locator(MultipleLocator(step))
+        if abs(dx_px) > 0.01 or abs(dy_px) > 0.01:
+            self._pan_by_pixels(dx_px, dy_px)
 
-        cur_xlim = self.ax.get_xlim()
-        cur_ylim = self.ax.get_ylim()
-        new_w = (cur_xlim[1] - cur_xlim[0]) * scale_step
-        new_h = (cur_ylim[1] - cur_ylim[0]) * scale_step
-
-        relx = (cur_xlim[1] - xdata) / max(cur_xlim[1] - cur_xlim[0], 1e-9)
-        rely = (cur_ylim[1] - ydata) / max(cur_ylim[1] - cur_ylim[0], 1e-9)
-
-        self.ax.set_xlim([xdata - new_w * (1 - relx), xdata + new_w * relx])
-        self.ax.set_ylim([ydata - new_h * (1 - rely), ydata + new_h * rely])
-        self.draw_idle()
-
-        # Temporizador para restaurar la escala exacta de 1 en 1 y refrescar curvas al detenerse el giro
-        self._wheel_timer.start(120)
         event.accept()
 
     def _on_wheel_stopped(self):
         """Restaura la escala exacta de 1 en 1 y sincroniza curvas de alta resolución al detenerse la rueda."""
-        if not self._is_zooming:
-            return
         self._is_zooming = False
         self._update_locators()
         self.ax.minorticks_on()
