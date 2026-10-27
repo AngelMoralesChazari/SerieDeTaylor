@@ -74,13 +74,17 @@ class LaTeXRenderer:
         if key in self._bytes_cache:
             return self._bytes_cache[key]
 
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
+
         cleaned = self.clean_latex_string(latex_str)
 
-        fig = plt.figure(figsize=(0.1, 0.1), dpi=dpi)
+        fig = Figure(figsize=(0.1, 0.1), dpi=dpi)
+        canvas = FigureCanvasAgg(fig)
         fig.patch.set_alpha(0.0)
 
         # Añadir texto en el centro
-        text = fig.text(
+        fig.text(
             0.5, 0.5,
             cleaned,
             fontsize=font_size,
@@ -90,18 +94,15 @@ class LaTeXRenderer:
         )
 
         buf = io.BytesIO()
-        try:
-            fig.savefig(
-                buf,
-                format="png",
-                dpi=dpi,
-                bbox_inches="tight",
-                pad_inches=0.04,
-                transparent=True
-            )
-            data = buf.getvalue()
-        finally:
-            plt.close(fig)
+        fig.savefig(
+            buf,
+            format="png",
+            dpi=dpi,
+            bbox_inches="tight",
+            pad_inches=0.04,
+            transparent=True
+        )
+        data = buf.getvalue()
 
         self._bytes_cache[key] = data
         return data

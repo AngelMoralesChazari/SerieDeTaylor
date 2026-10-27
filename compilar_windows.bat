@@ -12,7 +12,7 @@ pip install -r requirements.txt pyinstaller
 echo.
 echo 2. Empaquetando la aplicacion en modo portable de inicio instantaneo (--onedir)...
 echo    (Este modo abre en 1 segundo sin descomprimir a la carpeta Temp)
-pyinstaller --clean --name "SerieDeTaylor" --onedir --windowed main.py
+pyinstaller --clean --name "SerieDeTaylor" --onedir --windowed --exclude-module scipy --exclude-module pytest --exclude-module unittest --exclude-module tkinter main.py
 
 echo.
 echo ========================================================

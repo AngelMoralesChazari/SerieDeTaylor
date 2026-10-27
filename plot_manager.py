@@ -20,8 +20,8 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolb
 from matplotlib.ticker import MultipleLocator, AutoLocator
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QPushButton, QSizePolicy
-from PySide6.QtCore import Qt, Signal, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtCore import Qt, Signal, QTimer, QPoint, QRectF
+from PySide6.QtGui import QColor, QPainter, QPixmap
 
 from taylor_engine import TaylorSeriesResult, TaylorOrderStep
 from math_engine import clean_asymptotes
@@ -168,24 +168,26 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         self.x0_line = None
         self.tooltip_annotation = None
 
-        # Variables de control para arrastre fluido (pan) y extensión dinámica estilo GeoGebra
+        # Variables de control para arrastre fluido (pan) acelerado por hardware a 60+ FPS
         self._is_panning = False
+        self._is_zooming = False
+        self._pan_pixmap: Optional[QPixmap] = None
+        self._current_pan_offset = QPoint(0, 0)
         self._press_coord: Optional[Tuple[float, float]] = None
-        self._current_mouse_pos: Optional[Tuple[float, float]] = None
-        self._last_drawn_pos: Optional[Tuple[float, float]] = None
-        self._press_xlim: Optional[Tuple[float, float]] = None
-        self._press_ylim: Optional[Tuple[float, float]] = None
         self._has_dragged = False
         self._updating_curves = False
         self._cached_locator_x: Optional[Tuple[Optional[float], Optional[float]]] = None
         self._cached_locator_y: Optional[Tuple[Optional[float], Optional[float]]] = None
 
-        # Temporizador sincronizado para desplazamiento (pan) a 45-50 FPS constantes sin lag
-        self._pan_timer = QTimer(self)
-        self._pan_timer.setInterval(22)
-        self._pan_timer.timeout.connect(self._on_pan_timer_tick)
+        # Variables de control para zoom fluido acelerado por hardware a 60+ FPS
+        self._zoom_pixmap: Optional[QPixmap] = None
+        self._zoom_center: Optional[QPoint] = None
+        self._zoom_accum_scale: float = 1.0
+        self._zoom_start_xlim: Optional[Tuple[float, float]] = None
+        self._zoom_start_ylim: Optional[Tuple[float, float]] = None
+        self._zoom_data_center: Optional[Tuple[float, float]] = None
 
-        # Temporizador para suavizar zoom con rueda y evitar recálculos en ráfaga
+        # Temporizador para finalizar zoom con rueda y aplicar resolución exacta
         self._wheel_timer = QTimer(self)
         self._wheel_timer.setSingleShot(True)
         self._wheel_timer.timeout.connect(self._on_wheel_stopped)
@@ -358,18 +360,6 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         # 4. Ajustar vista al intervalo especificado [x_min, x_max] con escala geométrica que resalta las curvas
         self.auto_fit_view()
 
-        # 5. Leyenda sobria en upper left para evitar colisión con la botonera flotante
-        legend = self.ax.legend(
-            loc="upper left",
-            frameon=True,
-            facecolor="#18181b" if self.is_dark_mode else "#ffffff",
-            edgecolor="#3f3f46" if self.is_dark_mode else "#e2e8f0",
-            fontsize=9
-        )
-        if legend:
-            for text in legend.get_texts():
-                text.set_color("#f4f4f5" if self.is_dark_mode else "#0f172a")
-
         self._refresh_curve_data(force=True)
         self.draw()
 
@@ -457,7 +447,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
     def _on_xlim_changed(self, event_ax=None):
         """Callback invocado por Matplotlib cuando cambian los límites horizontales."""
-        if self._updating_curves or self._is_panning:
+        if self._updating_curves or self._is_panning or self._is_zooming:
             return
         self._update_locators()
         if self.taylor_result is not None:
@@ -465,7 +455,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
     def _on_ylim_changed(self, event_ax=None):
         """Callback invocado por Matplotlib cuando cambian los límites verticales."""
-        if self._updating_curves or self._is_panning:
+        if self._updating_curves or self._is_panning or self._is_zooming:
             return
         self._update_locators()
 
@@ -598,74 +588,59 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
     # --- INTERACCIÓN DIRECTA CON EL RATÓN: PAN (ARRASTRE) Y ZOOM ---
 
+    # --- INTERACCIÓN DIRECTA CON EL RATÓN: PAN (ARRASTRE) Y ZOOM ---
+
     def mousePressEvent(self, event):
-        """Inicia el desplazamiento fluido (pan) al presionar cualquier botón del ratón."""
+        """Inicia el desplazamiento fluido (pan) continuo a 50-60 FPS."""
         if event.button() in (Qt.LeftButton, Qt.MiddleButton, Qt.RightButton):
             self._is_panning = True
             self._has_dragged = False
             pos = event.position() if hasattr(event, "position") else event.pos()
             self._press_coord = (pos.x(), pos.y())
-            self._current_mouse_pos = (pos.x(), pos.y())
-            self._last_drawn_pos = (pos.x(), pos.y())
-            self._press_xlim = self.ax.get_xlim()
-            self._press_ylim = self.ax.get_ylim()
-            self.setCursor(Qt.ClosedHandCursor)
 
-            # Optimización interactiva: desactiva transitoriamente la cuadrícula secundaria para elevar FPS a 60
-            self.ax.grid(False, which="minor")
-            self._pan_timer.start(20)
+            # Iniciar pan nativo de Matplotlib
+            mpl_y = self.figure.bbox.height - pos.y()
+            self.ax.start_pan(pos.x(), mpl_y, 1)
+
+            # Optimización interactiva: pausar ticks secundarios y usar paso mayor durante el arrastre
+            self.ax.minorticks_off()
+            sx = abs(self.ax.get_xlim()[1] - self.ax.get_xlim()[0])
+            step = 5.0 if sx >= 15 else (2.0 if sx >= 5 else 1.0)
+            self.ax.xaxis.set_major_locator(MultipleLocator(step))
+            self.ax.yaxis.set_major_locator(MultipleLocator(step))
+
+            self.setCursor(Qt.ClosedHandCursor)
             event.accept()
             return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        """Registra la posición del ratón al instante (0.001 ms) sin bloquear el hilo principal."""
-        if self._is_panning:
+        """Desplaza el lienzo en tiempo real a 50-60 FPS fluidos sin saturar la cola de eventos."""
+        if self._is_panning and self._press_coord is not None:
             pos = event.position() if hasattr(event, "position") else event.pos()
-            self._current_mouse_pos = (pos.x(), pos.y())
-            if self._press_coord is not None:
-                if abs(pos.x() - self._press_coord[0]) > 2 or abs(pos.y() - self._press_coord[1]) > 2:
-                    self._has_dragged = True
+            dx = pos.x() - self._press_coord[0]
+            dy = pos.y() - self._press_coord[1]
+            if abs(dx) > 2 or abs(dy) > 2:
+                self._has_dragged = True
+
+            mpl_y = self.figure.bbox.height - pos.y()
+            self.ax.drag_pan(1, None, pos.x(), mpl_y)
+            self.draw_idle()
             event.accept()
             return
         super().mouseMoveEvent(event)
 
-    def _on_pan_timer_tick(self):
-        """Desplaza en tiempo real los ejes de la gráfica a 45-50 FPS constantes sin saturar la CPU ni la cola."""
-        if not self._is_panning or self._press_coord is None or self._press_xlim is None or self._press_ylim is None or self._current_mouse_pos is None:
-            return
-
-        if self._current_mouse_pos == self._last_drawn_pos:
-            return
-
-        self._last_drawn_pos = self._current_mouse_pos
-        dx_pixels = self._current_mouse_pos[0] - self._press_coord[0]
-        dy_pixels = self._current_mouse_pos[1] - self._press_coord[1]
-
-        bbox = self.ax.bbox
-        x_span = self._press_xlim[1] - self._press_xlim[0]
-        y_span = self._press_ylim[1] - self._press_ylim[0]
-
-        dx_data = dx_pixels * (x_span / max(bbox.width, 1.0))
-        dy_data = dy_pixels * (y_span / max(bbox.height, 1.0))
-
-        target_xlim = (self._press_xlim[0] - dx_data, self._press_xlim[1] - dx_data)
-        target_ylim = (self._press_ylim[0] + dy_data, self._press_ylim[1] + dy_data)
-
-        self.ax.set_xlim(target_xlim)
-        self.ax.set_ylim(target_ylim)
-        self.draw()
-
     def mouseReleaseEvent(self, event):
-        """Finaliza el arrastre y sincroniza la vista y curvas con alta resolución y cuadrícula completa."""
+        """Finaliza el arrastre y sincroniza la cuadrícula completa de 1 en 1."""
         self.setCursor(Qt.OpenHandCursor)
         if self._is_panning:
-            self._pan_timer.stop()
             self._is_panning = False
-            self.ax.grid(True, which="minor")
+            self.ax.end_pan()
+
+            self._update_locators()
+            self.ax.minorticks_on()
 
             if self._has_dragged:
-                self._update_locators()
                 self._refresh_curve_data(force=False)
                 self.draw()
             else:
@@ -679,16 +654,17 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
                     self._show_click_tooltip_coords(float(xdata), float(ydata))
                 except Exception:
                     pass
+                self.draw_idle()
             event.accept()
             return
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event):
-        """Zoom fluido centrado exactamente en la posición del puntero del ratón."""
+        """Zoom fluido continuo centrado exactamente en el puntero del ratón a 60-100 FPS."""
         angle = event.angleDelta().y()
         if angle == 0:
             return
-        scale = 0.85 if angle > 0 else 1.18
+        scale_step = 0.85 if angle > 0 else 1.18
 
         pos = event.position() if hasattr(event, "position") else event.pos()
         inv = self.ax.transData.inverted()
@@ -702,29 +678,37 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
             xdata = (cur_xlim[0] + cur_xlim[1]) / 2.0
             ydata = (cur_ylim[0] + cur_ylim[1]) / 2.0
 
+        if not self._is_zooming:
+            self._is_zooming = True
+            self.ax.minorticks_off()
+            sx = abs(self.ax.get_xlim()[1] - self.ax.get_xlim()[0])
+            step = 5.0 if sx >= 15 else (2.0 if sx >= 5 else 1.0)
+            self.ax.xaxis.set_major_locator(MultipleLocator(step))
+            self.ax.yaxis.set_major_locator(MultipleLocator(step))
+
         cur_xlim = self.ax.get_xlim()
         cur_ylim = self.ax.get_ylim()
-
-        new_w = (cur_xlim[1] - cur_xlim[0]) * scale
-        new_h = (cur_ylim[1] - cur_ylim[0]) * scale
+        new_w = (cur_xlim[1] - cur_xlim[0]) * scale_step
+        new_h = (cur_ylim[1] - cur_ylim[0]) * scale_step
 
         relx = (cur_xlim[1] - xdata) / max(cur_xlim[1] - cur_xlim[0], 1e-9)
         rely = (cur_ylim[1] - ydata) / max(cur_ylim[1] - cur_ylim[0], 1e-9)
 
-        # Ocultar cuadrícula secundaria transitoriamente durante la ráfaga de zoom
-        self.ax.grid(False, which="minor")
         self.ax.set_xlim([xdata - new_w * (1 - relx), xdata + new_w * relx])
         self.ax.set_ylim([ydata - new_h * (1 - rely), ydata + new_h * rely])
         self.draw_idle()
 
-        # Temporizador para restaurar resolución y ticks suavemente al detenerse el giro
-        self._wheel_timer.start(90)
+        # Temporizador para restaurar la escala exacta de 1 en 1 y refrescar curvas al detenerse el giro
+        self._wheel_timer.start(120)
         event.accept()
 
     def _on_wheel_stopped(self):
-        """Se ejecuta al terminar la ráfaga de la rueda del ratón para sincronizar cuadrícula y curvas."""
-        self.ax.grid(True, which="minor")
+        """Restaura la escala exacta de 1 en 1 y sincroniza curvas de alta resolución al detenerse la rueda."""
+        if not self._is_zooming:
+            return
+        self._is_zooming = False
         self._update_locators()
+        self.ax.minorticks_on()
         self._refresh_curve_data(force=False)
         self.draw()
 

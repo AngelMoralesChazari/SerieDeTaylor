@@ -822,6 +822,7 @@ class SidebarPanel(QWidget):
 
         self.cards_map: Dict[int, GeoGebraAlgebraCard] = {}
         self.selected_order: Optional[int] = None
+        self._steps_dirty: bool = False
 
         # Pop-up modal de configuración de parámetros estilo GeoGebra
         self.options_dialog = TaylorOptionsDialog(self, is_dark_mode=self.is_dark_mode)
@@ -1060,6 +1061,8 @@ class SidebarPanel(QWidget):
         if hasattr(self.tabs, "setTabVisible"):
             self.tabs.setTabVisible(2, False)
 
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
         main_layout.addWidget(self.tabs, stretch=1)
 
     def set_dark_mode(self, is_dark: bool):
@@ -1236,12 +1239,11 @@ class SidebarPanel(QWidget):
         self.cards_map[-1] = card_f
         self.alg_list_layout.insertWidget(0, card_f)
 
-        # 2. Tarjetas para cada polinomio P_k(x) en la Vista Álgebra y Paso a Paso
+        # 2. Tarjetas para cada polinomio P_k(x) en la Vista Álgebra (render ultra rápido de 3.9 ms)
         for idx, step in enumerate(result.steps):
             k = step.order
             color_hex = TAYLOR_PALETTE[k % len(TAYLOR_PALETTE)]
 
-            # Polinomio en potencias de (x - x0)
             card_p = GeoGebraAlgebraCard(
                 order=k,
                 title=f"Aproximación P_{k}(x)",
@@ -1254,32 +1256,11 @@ class SidebarPanel(QWidget):
             self.cards_map[k] = card_p
             self.alg_list_layout.insertWidget(idx + 1, card_p)
 
-            # Tarjeta de paso matemático como en la libreta (Imagen 4)
-            step_widget = NotebookStepWidget(
-                step=step,
-                x0_val=result.x0,
-                is_dark_mode=self.is_dark_mode
-            )
-            self.steps_items_layout.addWidget(step_widget)
-
-        # 3. Mostrar la fórmula final construida (idéntica al final de la Imagen 4)
-        txt_color = "#f8fafc" if self.is_dark_mode else "#0f172a"
-
-        ltx_taylor = f"f(x) \\approx {result.constructed_taylor_formula_latex}"
-        px_t = GLOBAL_LATEX_RENDERER.render_to_pixmap(ltx_taylor, font_size=10.5, color_hex=txt_color)
-        if not px_t.isNull():
-            self.lbl_final_taylor.setPixmap(px_t)
-        else:
-            self.lbl_final_taylor.setText(ltx_taylor)
-        self.lbl_final_taylor.setToolTip(ltx_taylor)
-
-        ltx_exp = f"\\text{{Expandida: }} P_{{{result.max_order}}}(x) = {result.expanded_formula_latex}"
-        px_e = GLOBAL_LATEX_RENDERER.render_to_pixmap(ltx_exp, font_size=9.5, color_hex="#64748b")
-        if not px_e.isNull():
-            self.lbl_final_expanded.setPixmap(px_e)
-        else:
-            self.lbl_final_expanded.setText(ltx_exp)
-        self.lbl_final_expanded.setToolTip(ltx_exp)
+        # 3. Marcar pasos detallados para carga bajo demanda (ahorra ~3 segundos de renderizado LaTeX al abrir)
+        self._steps_dirty = True
+        if self.tabs.currentIndex() == 1:
+            self._populate_step_widgets()
+            self._steps_dirty = False
 
         # 4. Actualizar visualización de la Parte b en su pestaña de Evaluación
         is_eval = self.is_eval_point_enabled()
@@ -1296,6 +1277,47 @@ class SidebarPanel(QWidget):
     def _on_card_clicked(self, order: int):
         self.select_order(order)
         self.order_selected.emit(order)
+
+    def _on_tab_changed(self, index: int):
+        """Genera los widgets LaTeX de la pestaña Paso a Paso de forma diferida."""
+        if index == 1 and getattr(self, "_steps_dirty", False):
+            self._populate_step_widgets()
+            self._steps_dirty = False
+
+    def _populate_step_widgets(self):
+        """Construye las tarjetas detalladas de la libreta y la fórmula final."""
+        if not self.result:
+            return
+
+        while self.steps_items_layout.count() > 0:
+            item = self.steps_items_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for step in self.result.steps:
+            step_widget = NotebookStepWidget(
+                step=step,
+                x0_val=self.result.x0,
+                is_dark_mode=self.is_dark_mode
+            )
+            self.steps_items_layout.addWidget(step_widget)
+
+        txt_color = "#f8fafc" if self.is_dark_mode else "#0f172a"
+        ltx_taylor = f"f(x) \\approx {self.result.constructed_taylor_formula_latex}"
+        px_t = GLOBAL_LATEX_RENDERER.render_to_pixmap(ltx_taylor, font_size=10.5, color_hex=txt_color)
+        if not px_t.isNull():
+            self.lbl_final_taylor.setPixmap(px_t)
+        else:
+            self.lbl_final_taylor.setText(ltx_taylor)
+        self.lbl_final_taylor.setToolTip(ltx_taylor)
+
+        ltx_exp = f"\\text{{Expandida: }} P_{{{self.result.max_order}}}(x) = {self.result.expanded_formula_latex}"
+        px_e = GLOBAL_LATEX_RENDERER.render_to_pixmap(ltx_exp, font_size=9.5, color_hex="#64748b")
+        if not px_e.isNull():
+            self.lbl_final_expanded.setPixmap(px_e)
+        else:
+            self.lbl_final_expanded.setText(ltx_exp)
+        self.lbl_final_expanded.setToolTip(ltx_exp)
 
     def set_inputs(
         self,
