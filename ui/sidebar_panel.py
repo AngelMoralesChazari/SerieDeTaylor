@@ -1,5 +1,5 @@
 """
-Panel lateral izquierdo ("Vista Álgebra" estilo GeoGebra).
+Panel lateral izquierdo.
 Contiene la configuración compacta (f(x), x0, intervalo [x_min, x_max], orden n),
 la lista de funciones con botones circulares de color para activar/desactivar curvas
 y el desglose analítico paso a paso idéntico al cuaderno de ejercicios (Imagen 4).
