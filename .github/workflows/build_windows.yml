@@ -27,7 +27,7 @@ jobs:
 
       - name: Compilar aplicación a ejecutable de inicio instantáneo (--onedir)
         run: |
-          pyinstaller --clean --name "SerieDeTaylor" --onedir --windowed --exclude-module scipy --exclude-module pytest --exclude-module unittest --exclude-module tkinter main.py
+          pyinstaller --clean --noconfirm --name "SerieDeTaylor" --onedir --windowed main.py
 
       - name: Comprimir paquete portable para descarga rápida
         shell: pwsh
