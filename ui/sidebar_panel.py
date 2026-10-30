@@ -873,7 +873,7 @@ class SidebarPanel(QWidget):
         lbl_fx_title.setStyleSheet("font-weight: 600; font-size: 12px;")
         in_layout.addWidget(lbl_fx_title)
 
-        self.input_fx = QLineEdit("x^4 - 3x^2 + 1")
+        self.input_fx = QLineEdit("")
         self.input_fx.setObjectName("input_fx")
         self.input_fx.setFixedHeight(38)
         font_fx = self.input_fx.font()
@@ -892,7 +892,7 @@ class SidebarPanel(QWidget):
         self.lbl_preview_fx.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.lbl_preview_fx.setStyleSheet("min-height: 44px; padding: 2px 4px;")
         in_layout.addWidget(self.lbl_preview_fx)
-        self._update_fx_preview("x^4 - 3x^2 + 1")
+        self._update_fx_preview("")
 
         # Resumen informativo de parámetros actuales
         self.lbl_options_summary = QLabel()

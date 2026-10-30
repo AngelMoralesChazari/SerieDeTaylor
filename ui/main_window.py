@@ -49,20 +49,6 @@ class MainWindow(QMainWindow):
         self._setup_shortcuts()
         self.apply_theme()
 
-        # Cargar por defecto el ejercicio a) de la libreta (Imagen 4): x^4 - 3x^2 + 1 con x0 = 1
-        self.sidebar.set_inputs(
-            func_str="x^4 - 3x^2 + 1",
-            x0=1.0,
-            x_min=-2.5,
-            x_max=2.5,
-            order=4
-        )
-        # Desacoplar el cálculo inicial para que la ventana abra de forma inmediata (< 0.5 s)
-        QTimer.singleShot(
-            30,
-            lambda: self.solve_series("x^4 - 3x^2 + 1", x0=1.0, x_min=-2.5, x_max=2.5, max_order=4)
-        )
-
     def _init_ui(self):
         # 1. Contenedor central principal
         central_widget = QWidget()
