@@ -14,7 +14,7 @@ import time
 from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import matplotlib
-# Optimizaciones de rasterización de alta velocidad en Matplotlib
+# Optimizaciones de rasterización de alta velocidad en Matplotlib para máxima fluidez
 matplotlib.rcParams['path.simplify'] = True
 matplotlib.rcParams['path.simplify_threshold'] = 1.0
 matplotlib.rcParams['agg.path.chunksize'] = 20000
@@ -176,16 +176,26 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         self.x0_line = None
         self.tooltip_annotation = None
 
-        # Variables de control para arrastre fluido (pan) y zoom matemático instantáneo
+        # Variables de control para arrastre y zoom fluidos a 50 FPS (Paced Frame Rendering)
         self._is_panning = False
         self._is_zooming = False
+        self._is_interacting = False
         self._has_dragged = False
         self._updating_curves = False
         self._press_coord: Optional[Tuple[float, float]] = None
+        self._press_xlim: Optional[List[float]] = None
+        self._press_ylim: Optional[List[float]] = None
+        self._target_xlim: Optional[List[float]] = list(self.ax.get_xlim())
+        self._target_ylim: Optional[List[float]] = list(self.ax.get_ylim())
         self._cached_locator_x: Optional[Tuple[Optional[float], Optional[float]]] = None
         self._cached_locator_y: Optional[Tuple[Optional[float], Optional[float]]] = None
 
-        # Temporizador para finalizar ráfagas de rueda/gestos y sincronizar curvas exactas
+        # Temporizador para renderizar cuadros sincronizados a ~50 FPS (elimina retrasos en Windows)
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.timeout.connect(self._do_render_frame)
+
+        # Temporizador para finalizar zoom con rueda y aplicar resolución exacta
         self._wheel_timer = QTimer(self)
         self._wheel_timer.setSingleShot(True)
         self._wheel_timer.timeout.connect(self._on_wheel_stopped)
@@ -256,8 +266,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
             fw = self.floating_nav.sizeHint().width()
             self.floating_nav.move(max(self.width() - fw - 14, 10), 14)
 
-
-    def update_data(self, result: TaylorSeriesResult, resolution: int = 1600):
+    def update_data(self, result: TaylorSeriesResult, resolution: int = 800):
         """Actualiza los datos matemáticos y renderiza las curvas con alta resolución suave."""
         self.taylor_result = result
         self.selected_order = None
@@ -454,7 +463,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
     def _on_xlim_changed(self, event_ax=None):
         """Callback invocado por Matplotlib cuando cambian los límites horizontales."""
-        if self._updating_curves or self._is_panning or self._is_zooming:
+        if self._is_interacting or self._updating_curves or self._is_panning or self._is_zooming:
             return
         self._update_locators()
         if self.taylor_result is not None:
@@ -462,7 +471,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
     def _on_ylim_changed(self, event_ax=None):
         """Callback invocado por Matplotlib cuando cambian los límites verticales."""
-        if self._updating_curves or self._is_panning or self._is_zooming:
+        if self._is_interacting or self._updating_curves or self._is_panning or self._is_zooming:
             return
         self._update_locators()
 
@@ -473,7 +482,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         """
         if self.taylor_result is None or self._updating_curves:
             return
-        if self._is_panning and not force:
+        if (self._is_interacting or self._is_panning or self._is_zooming) and not force:
             return
 
         cur_xlim = self.ax.get_xlim()
@@ -487,10 +496,10 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         if not force and self.x_grid is not None and len(self.x_grid) >= 400:
             grid_min = float(self.x_grid[0])
             grid_max = float(self.x_grid[-1])
-            # Si el área visible está cubierta con margen y con al menos 400 puntos visibles
+            # Si el área visible está cubierta con margen y con al menos 600 puntos visibles
             if grid_min <= (x_vis_min - 0.2 * span) and grid_max >= (x_vis_max + 0.2 * span):
                 pts_in_view = int(np.count_nonzero((self.x_grid >= x_vis_min) & (self.x_grid <= x_vis_max)))
-                if pts_in_view >= 400:
+                if pts_in_view >= 600:
                     return
 
         self._updating_curves = True
@@ -632,6 +641,15 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
                 return True
         return False
 
+    def _do_render_frame(self):
+        """Renderiza un cuadro fluido sincronizado a ~50 FPS durante interacción continua."""
+        if self._target_xlim is None or self._target_ylim is None:
+            return
+        self.ax.set_xlim(self._target_xlim)
+        self.ax.set_ylim(self._target_ylim)
+        self._update_locators()
+        self.draw()
+
     def _handle_gesture(self, event: QGestureEvent) -> bool:
         """Procesa gestos de pellizco estándar (touchscreens y trackpads compatibles)."""
         pinch = event.gesture(Qt.PinchGesture)
@@ -649,7 +667,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         return False
 
     def _apply_zoom_at_pos(self, pos, scale: float):
-        """Aplica zoom matemático real centrado exactamente en la posición del puntero del ratón."""
+        """Aplica zoom fluido centrado exactamente en la posición del puntero o centro del pellizco."""
         if hasattr(self, "mouseEventCoords"):
             mpl_x, mpl_y = self.mouseEventCoords(pos)
         else:
@@ -665,59 +683,58 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
             xdata = (cur_xlim[0] + cur_xlim[1]) / 2.0
             ydata = (cur_ylim[0] + cur_ylim[1]) / 2.0
 
-        cur_xlim = self.ax.get_xlim()
-        cur_ylim = self.ax.get_ylim()
+        base_xlim = self._target_xlim if self._target_xlim is not None else list(self.ax.get_xlim())
+        base_ylim = self._target_ylim if self._target_ylim is not None else list(self.ax.get_ylim())
 
-        new_w = (cur_xlim[1] - cur_xlim[0]) * scale
-        new_h = (cur_ylim[1] - cur_ylim[0]) * scale
+        new_w = (base_xlim[1] - base_xlim[0]) * scale
+        new_h = (base_ylim[1] - base_ylim[0]) * scale
 
-        relx = (cur_xlim[1] - xdata) / max(cur_xlim[1] - cur_xlim[0], 1e-9)
-        rely = (cur_ylim[1] - ydata) / max(cur_ylim[1] - cur_ylim[0], 1e-9)
+        relx = (base_xlim[1] - xdata) / max(base_xlim[1] - base_xlim[0], 1e-9)
+        rely = (base_ylim[1] - ydata) / max(base_ylim[1] - base_ylim[0], 1e-9)
 
+        self._target_xlim = [xdata - new_w * (1 - relx), xdata + new_w * relx]
+        self._target_ylim = [ydata - new_h * (1 - rely), ydata + new_h * rely]
+        self._is_interacting = True
         self._is_zooming = True
-        self.ax.set_xlim([xdata - new_w * (1 - relx), xdata + new_w * relx])
-        self.ax.set_ylim([ydata - new_h * (1 - rely), ydata + new_h * rely])
-        self._update_locators()
-        self._refresh_curve_data(force=False)
-        self.draw_idle()
 
-        # Al pausar el zoom, sincronizar curvas de alta densidad con force=True
+        if not self._render_timer.isActive():
+            self._render_timer.start(16)
+
+        # Temporizador para sincronizar curvas con máxima precisión al detenerse
         self._wheel_timer.start(120)
 
     def _pan_by_pixels(self, dx_pixels: float, dy_pixels: float):
-        """Desplaza matemáticamente la vista con dos dedos en el trackpad."""
+        """Desplaza suavemente la vista con dos dedos en el trackpad."""
         bbox = self.ax.bbox
-        cur_xlim = self.ax.get_xlim()
-        cur_ylim = self.ax.get_ylim()
+        cur_xlim = self._target_xlim if self._target_xlim is not None else list(self.ax.get_xlim())
+        cur_ylim = self._target_ylim if self._target_ylim is not None else list(self.ax.get_ylim())
         x_span = cur_xlim[1] - cur_xlim[0]
         y_span = cur_ylim[1] - cur_ylim[0]
 
         dx_data = dx_pixels * (x_span / max(bbox.width, 1.0)) * 0.75
         dy_data = dy_pixels * (y_span / max(bbox.height, 1.0)) * 0.75
 
-        self._is_panning = True
-        self.ax.set_xlim(cur_xlim[0] - dx_data, cur_xlim[1] - dx_data)
-        self.ax.set_ylim(cur_ylim[0] + dy_data, cur_ylim[1] + dy_data)
-        self._update_locators()
-        self._refresh_curve_data(force=False)
-        self.draw_idle()
+        self._target_xlim = [cur_xlim[0] - dx_data, cur_xlim[1] - dx_data]
+        self._target_ylim = [cur_ylim[0] + dy_data, cur_ylim[1] + dy_data]
+        self._is_interacting = True
+
+        if not self._render_timer.isActive():
+            self._render_timer.start(16)
 
         self._wheel_timer.start(120)
 
     def mousePressEvent(self, event):
-        """Inicia el desplazamiento nativo continuo (pan) con botón del ratón manteniendo escala 1 a 1."""
+        """Inicia el desplazamiento fluido (pan) continuo con botón del ratón manteniendo escala de 1 en 1."""
         if event.button() in (Qt.LeftButton, Qt.MiddleButton, Qt.RightButton):
             self._is_panning = True
+            self._is_interacting = True
             self._has_dragged = False
             pos = event.position() if hasattr(event, "position") else event.pos()
             self._press_coord = (pos.x(), pos.y())
-
-            if hasattr(self, "mouseEventCoords"):
-                mpl_x, mpl_y = self.mouseEventCoords(pos)
-            else:
-                mpl_x = pos.x()
-                mpl_y = self.figure.bbox.height - pos.y()
-            self.ax.start_pan(mpl_x, mpl_y, 1)
+            self._press_xlim = list(self.ax.get_xlim())
+            self._press_ylim = list(self.ax.get_ylim())
+            self._target_xlim = list(self._press_xlim)
+            self._target_ylim = list(self._press_ylim)
 
             self.setCursor(Qt.ClosedHandCursor)
             event.accept()
@@ -725,40 +742,48 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        """Desplaza la gráfica en tiempo real sincronizando curvas y ejes sin saltos ni retrasos."""
-        if self._is_panning and self._press_coord is not None:
+        """Desplaza el lienzo en tiempo real a 60 FPS fluidos manteniendo la escala de 1 en 1."""
+        if self._is_panning and self._press_coord is not None and self._press_xlim is not None and self._press_ylim is not None:
             pos = event.position() if hasattr(event, "position") else event.pos()
             dx = pos.x() - self._press_coord[0]
             dy = pos.y() - self._press_coord[1]
             if abs(dx) > 2 or abs(dy) > 2:
                 self._has_dragged = True
 
-            if hasattr(self, "mouseEventCoords"):
-                mpl_x, mpl_y = self.mouseEventCoords(pos)
-            else:
-                mpl_x = pos.x()
-                mpl_y = self.figure.bbox.height - pos.y()
+            bbox = self.ax.bbox
+            x_span = self._press_xlim[1] - self._press_xlim[0]
+            y_span = self._press_ylim[1] - self._press_ylim[0]
+            dpr = getattr(self, "device_pixel_ratio", None) or (self.devicePixelRatioF() if hasattr(self, "devicePixelRatioF") else 1.0)
+            dx_data = (dx * dpr) * (x_span / max(bbox.width, 1.0))
+            dy_data = (dy * dpr) * (y_span / max(bbox.height, 1.0))
 
-            if getattr(self.ax, "_pan_start", None) is not None:
-                self.ax.drag_pan(1, None, mpl_x, mpl_y)
-                self._update_locators()
-                self.draw_idle()
+            self._target_xlim = [self._press_xlim[0] - dx_data, self._press_xlim[1] - dx_data]
+            self._target_ylim = [self._press_ylim[0] + dy_data, self._press_ylim[1] + dy_data]
+
+            if not self._render_timer.isActive():
+                self._render_timer.start(16)
+
             event.accept()
             return
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
-        """Finaliza el arrastre sin ningún salto al centro y sincroniza las curvas nítidas."""
+        """Finaliza el arrastre y sincroniza la cuadrícula completa de 1 en 1."""
         self.setCursor(Qt.OpenHandCursor)
         if self._is_panning:
             self._is_panning = False
-            if getattr(self.ax, "_pan_start", None) is not None:
-                self.ax.end_pan()
+            self._is_interacting = False
+            self._render_timer.stop()
+
+            if self._target_xlim is not None and self._target_ylim is not None:
+                self.ax.set_xlim(self._target_xlim)
+                self.ax.set_ylim(self._target_ylim)
+
             self._update_locators()
 
             if self._has_dragged:
-                self._refresh_curve_data(force=True)
-                self.draw_idle()
+                self._refresh_curve_data(force=False)
+                self.draw()
             else:
                 # Clic sin arrastre: convertir a coordenadas matemáticas e inspeccionar
                 pos = event.position() if hasattr(event, "position") else event.pos()
@@ -780,34 +805,46 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
     def wheelEvent(self, event):
         """
-        Zoom natural y fluido en Windows (con rueda de ratón o trackpad):
-        - Girar rueda hacia arriba: Realiza zoom in centrado en el cursor.
-        - Girar rueda hacia abajo: Realiza zoom out centrado en el cursor.
-        - Desplazamiento horizontal: Desplaza en X.
+        Manejo inteligente de trackpad y rueda:
+        - Si se presiona Ctrl + rueda/deslizamiento: Realiza zoom centrado en el cursor.
+        - Deslizamiento con dos dedos en trackpad (arriba/abajo o lados sin Ctrl): DESPLAZA (pan) el plano cartesiano.
+        - El zoom gestual principal se realiza abriendo o cerrando los dedos en el trackpad (pinch-to-zoom).
         """
-        angle = event.angleDelta().y()
-        if angle != 0:
-            scale_step = 0.88 if angle > 0 else 1.14
-            pos = event.position() if hasattr(event, "position") else event.pos()
-            self._apply_zoom_at_pos(pos, scale_step)
+        has_ctrl = bool(event.modifiers() & Qt.ControlModifier)
+
+        if has_ctrl:
+            angle = event.angleDelta().y()
+            if angle != 0:
+                scale_step = 0.88 if angle > 0 else 1.14
+                pos = event.position() if hasattr(event, "position") else event.pos()
+                self._apply_zoom_at_pos(pos, scale_step)
             event.accept()
             return
 
-        angle_x = event.angleDelta().x()
-        if abs(angle_x) > 0.01:
-            self._pan_by_pixels(float(angle_x) / 4.0, 0.0)
-            event.accept()
-            return
+        # Dos dedos en trackpad: desplazan la vista continuamente (paneo) en lugar de hacer zoom inesperado
+        if event.hasPixelDelta():
+            dx_px = float(event.pixelDelta().x())
+            dy_px = float(event.pixelDelta().y())
+        else:
+            dx_px = float(event.angleDelta().x()) / 4.0
+            dy_px = float(event.angleDelta().y()) / 4.0
+
+        if abs(dx_px) > 0.01 or abs(dy_px) > 0.01:
+            self._pan_by_pixels(dx_px, dy_px)
 
         event.accept()
 
     def _on_wheel_stopped(self):
-        """Finaliza la ráfaga de zoom y sincroniza curvas vectoriales completas."""
+        """Restaura la escala exacta de 1 en 1 y sincroniza curvas de alta resolución al detenerse la rueda."""
+        self._render_timer.stop()
+        self._is_interacting = False
         self._is_zooming = False
-        self._is_panning = False
+        if self._target_xlim is not None and self._target_ylim is not None:
+            self.ax.set_xlim(self._target_xlim)
+            self.ax.set_ylim(self._target_ylim)
         self._update_locators()
-        self._refresh_curve_data(force=True)
-        self.draw_idle()
+        self._refresh_curve_data(force=False)
+        self.draw()
 
     def keyPressEvent(self, event):
         """Permite desplazarse con las flechas del teclado y zoom con teclas +/-."""
