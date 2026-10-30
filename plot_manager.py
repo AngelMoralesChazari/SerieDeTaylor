@@ -13,11 +13,10 @@ from __future__ import annotations
 import time
 from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
-import matplotlib
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
-from matplotlib.ticker import MultipleLocator, AutoLocator
+from matplotlib.ticker import MultipleLocator, AutoLocator, NullLocator
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QPushButton, QSizePolicy,
@@ -171,24 +170,24 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         self.x0_line = None
         self.tooltip_annotation = None
 
-        # Variables de control para arrastre fluido (pan) acelerado por hardware a 60+ FPS
+        # Variables de control para arrastre y zoom fluidos a 50 FPS (Paced Frame Rendering)
         self._is_panning = False
         self._is_zooming = False
-        self._pan_pixmap: Optional[QPixmap] = None
-        self._current_pan_offset = QPoint(0, 0)
-        self._press_coord: Optional[Tuple[float, float]] = None
+        self._is_interacting = False
         self._has_dragged = False
         self._updating_curves = False
+        self._press_coord: Optional[Tuple[float, float]] = None
+        self._press_xlim: Optional[List[float]] = None
+        self._press_ylim: Optional[List[float]] = None
+        self._target_xlim: Optional[List[float]] = list(self.ax.get_xlim())
+        self._target_ylim: Optional[List[float]] = list(self.ax.get_ylim())
         self._cached_locator_x: Optional[Tuple[Optional[float], Optional[float]]] = None
         self._cached_locator_y: Optional[Tuple[Optional[float], Optional[float]]] = None
 
-        # Variables de control para zoom fluido acelerado por hardware a 60+ FPS
-        self._zoom_pixmap: Optional[QPixmap] = None
-        self._zoom_center: Optional[QPoint] = None
-        self._zoom_accum_scale: float = 1.0
-        self._zoom_start_xlim: Optional[Tuple[float, float]] = None
-        self._zoom_start_ylim: Optional[Tuple[float, float]] = None
-        self._zoom_data_center: Optional[Tuple[float, float]] = None
+        # Temporizador para renderizar cuadros sincronizados a ~50 FPS (elimina retrasos en Windows)
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.timeout.connect(self._do_render_frame)
 
         # Temporizador para finalizar zoom con rueda y aplicar resolución exacta
         self._wheel_timer = QTimer(self)
@@ -396,6 +395,8 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
         # 2. Centrado en Y con escala simétrica de -10 a 10 y unidades de 1 en 1
         self.ax.set_ylim(-10.5, 10.5)
+        self._target_xlim = list(self.ax.get_xlim())
+        self._target_ylim = list(self.ax.get_ylim())
         self._update_locators()
         self._refresh_curve_data(force=True)
         self.draw_idle()
@@ -403,7 +404,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
     def _update_locators(self):
         """
         Mantiene los ejes y la cuadrícula en unidades de 1 en 1 sin saltos de 2.5, 4 o 5,
-        optimizando drásticamente el rendimiento con caché para evitar resetear ticks en cada evento.
+        optimizando drásticamente el rendimiento con caché y eliminando líneas secundarias redundantes.
         """
         cur_xlim = self.ax.get_xlim()
         cur_ylim = self.ax.get_ylim()
@@ -422,13 +423,15 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         elif sx < 4.0:
             maj_x, min_x = 0.5, 0.1
         else:
-            maj_x, min_x = 1.0, 0.5
+            maj_x, min_x = 1.0, None
 
         if (maj_x, min_x) != self._cached_locator_x:
             self._cached_locator_x = (maj_x, min_x)
             self.ax.xaxis.set_major_locator(MultipleLocator(maj_x))
             if min_x is not None:
                 self.ax.xaxis.set_minor_locator(MultipleLocator(min_x))
+            else:
+                self.ax.xaxis.set_minor_locator(NullLocator())
 
         # Determinar intervalos limpios para Eje Y (estricto de 1 en 1 en vista normal)
         if sy > 120:
@@ -442,17 +445,19 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         elif sy < 4.0:
             maj_y, min_y = 0.5, 0.1
         else:
-            maj_y, min_y = 1.0, 0.5
+            maj_y, min_y = 1.0, None
 
         if (maj_y, min_y) != self._cached_locator_y:
             self._cached_locator_y = (maj_y, min_y)
             self.ax.yaxis.set_major_locator(MultipleLocator(maj_y))
             if min_y is not None:
                 self.ax.yaxis.set_minor_locator(MultipleLocator(min_y))
+            else:
+                self.ax.yaxis.set_minor_locator(NullLocator())
 
     def _on_xlim_changed(self, event_ax=None):
         """Callback invocado por Matplotlib cuando cambian los límites horizontales."""
-        if self._updating_curves or self._is_panning or self._is_zooming:
+        if self._is_interacting or self._updating_curves or self._is_panning or self._is_zooming:
             return
         self._update_locators()
         if self.taylor_result is not None:
@@ -460,7 +465,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
     def _on_ylim_changed(self, event_ax=None):
         """Callback invocado por Matplotlib cuando cambian los límites verticales."""
-        if self._updating_curves or self._is_panning or self._is_zooming:
+        if self._is_interacting or self._updating_curves or self._is_panning or self._is_zooming:
             return
         self._update_locators()
 
@@ -471,7 +476,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         """
         if self.taylor_result is None or self._updating_curves:
             return
-        if self._is_panning and not force:
+        if (self._is_interacting or self._is_panning or self._is_zooming) and not force:
             return
 
         cur_xlim = self.ax.get_xlim()
@@ -493,8 +498,8 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
         self._updating_curves = True
         try:
-            # Margen cómodo (0.5x span) para permitir arrastres sin ver cortes
-            pad = max(span * 0.5, 1.5)
+            # Margen generoso (1.5x span) para permitir arrastres continuos sin ver cortes
+            pad = max(span * 1.5, 6.0)
             x_start = x_vis_min - pad
             x_end = x_vis_max + pad
 
@@ -536,9 +541,11 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         new_h = (cur_ylim[1] - cur_ylim[0]) * factor
         self.ax.set_xlim(cx - new_w / 2.0, cx + new_w / 2.0)
         self.ax.set_ylim(cy - new_h / 2.0, cy + new_h / 2.0)
+        self._target_xlim = list(self.ax.get_xlim())
+        self._target_ylim = list(self.ax.get_ylim())
         self._update_locators()
         self._refresh_curve_data(force=True)
-        self.draw_idle()
+        self.draw()
 
     def show_exact_intersection_point(self, x_val: Optional[Union[float, bool]] = None):
         """
@@ -569,6 +576,8 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         h = cur_ylim[1] - cur_ylim[0]
         self.ax.set_xlim(target_x - w / 2.0, target_x + w / 2.0)
         self.ax.set_ylim(yf - h / 2.0, yf + h / 2.0)
+        self._target_xlim = list(self.ax.get_xlim())
+        self._target_ylim = list(self.ax.get_ylim())
         self._refresh_curve_data()
 
         # Mostrar el globo de error idéntico a la Imagen 2 en las coordenadas exactas
@@ -587,6 +596,8 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         dy = (cur_ylim[1] - cur_ylim[0]) * dy_ratio
         self.ax.set_xlim(cur_xlim[0] + dx, cur_xlim[1] + dx)
         self.ax.set_ylim(cur_ylim[0] + dy, cur_ylim[1] + dy)
+        self._target_xlim = list(self.ax.get_xlim())
+        self._target_ylim = list(self.ax.get_ylim())
         self._update_locators()
         self._refresh_curve_data()
         self.draw_idle()
@@ -624,6 +635,15 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
                 return True
         return False
 
+    def _do_render_frame(self):
+        """Renderiza un cuadro fluido sincronizado a ~50 FPS durante interacción continua."""
+        if self._target_xlim is None or self._target_ylim is None:
+            return
+        self.ax.set_xlim(self._target_xlim)
+        self.ax.set_ylim(self._target_ylim)
+        self._update_locators()
+        self.draw()
+
     def _handle_gesture(self, event: QGestureEvent) -> bool:
         """Procesa gestos de pellizco estándar (touchscreens y trackpads compatibles)."""
         pinch = event.gesture(Qt.PinchGesture)
@@ -635,9 +655,7 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
                     pos = pinch.centerPoint()
                     self._apply_zoom_at_pos(pos, scale)
             elif pinch.state() in (Qt.GestureState.GestureFinished, Qt.GestureState.GestureCanceled):
-                self._update_locators()
-                self._refresh_curve_data(force=False)
-                self.draw()
+                self._on_wheel_stopped()
             event.accept()
             return True
         return False
@@ -655,38 +673,43 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
             xdata = (cur_xlim[0] + cur_xlim[1]) / 2.0
             ydata = (cur_ylim[0] + cur_ylim[1]) / 2.0
 
-        cur_xlim = self.ax.get_xlim()
-        cur_ylim = self.ax.get_ylim()
-        new_w = (cur_xlim[1] - cur_xlim[0]) * scale
-        new_h = (cur_ylim[1] - cur_ylim[0]) * scale
+        base_xlim = self._target_xlim if self._target_xlim is not None else list(self.ax.get_xlim())
+        base_ylim = self._target_ylim if self._target_ylim is not None else list(self.ax.get_ylim())
 
-        relx = (cur_xlim[1] - xdata) / max(cur_xlim[1] - cur_xlim[0], 1e-9)
-        rely = (cur_ylim[1] - ydata) / max(cur_ylim[1] - cur_ylim[0], 1e-9)
+        new_w = (base_xlim[1] - base_xlim[0]) * scale
+        new_h = (base_ylim[1] - base_ylim[0]) * scale
 
-        self.ax.set_xlim([xdata - new_w * (1 - relx), xdata + new_w * relx])
-        self.ax.set_ylim([ydata - new_h * (1 - rely), ydata + new_h * rely])
-        # Mantener estrictamente los locators limpios de 1 en 1 sin saltar a 5 en 5
-        self._update_locators()
-        self.draw_idle()
+        relx = (base_xlim[1] - xdata) / max(base_xlim[1] - base_xlim[0], 1e-9)
+        rely = (base_ylim[1] - ydata) / max(base_ylim[1] - base_ylim[0], 1e-9)
 
-        # Temporizador para finalizar el zoom y sincronizar curvas con máxima precisión
+        self._target_xlim = [xdata - new_w * (1 - relx), xdata + new_w * relx]
+        self._target_ylim = [ydata - new_h * (1 - rely), ydata + new_h * rely]
+        self._is_interacting = True
+        self._is_zooming = True
+
+        if not self._render_timer.isActive():
+            self._render_timer.start(20)
+
+        # Temporizador para sincronizar curvas con máxima precisión al detenerse
         self._wheel_timer.start(120)
 
     def _pan_by_pixels(self, dx_pixels: float, dy_pixels: float):
         """Desplaza suavemente la vista con dos dedos en el trackpad."""
         bbox = self.ax.bbox
-        cur_xlim = self.ax.get_xlim()
-        cur_ylim = self.ax.get_ylim()
+        cur_xlim = self._target_xlim if self._target_xlim is not None else list(self.ax.get_xlim())
+        cur_ylim = self._target_ylim if self._target_ylim is not None else list(self.ax.get_ylim())
         x_span = cur_xlim[1] - cur_xlim[0]
         y_span = cur_ylim[1] - cur_ylim[0]
 
         dx_data = dx_pixels * (x_span / max(bbox.width, 1.0)) * 0.75
         dy_data = dy_pixels * (y_span / max(bbox.height, 1.0)) * 0.75
 
-        self.ax.set_xlim(cur_xlim[0] - dx_data, cur_xlim[1] - dx_data)
-        self.ax.set_ylim(cur_ylim[0] + dy_data, cur_ylim[1] + dy_data)
-        self._update_locators()
-        self.draw_idle()
+        self._target_xlim = [cur_xlim[0] - dx_data, cur_xlim[1] - dx_data]
+        self._target_ylim = [cur_ylim[0] + dy_data, cur_ylim[1] + dy_data]
+        self._is_interacting = True
+
+        if not self._render_timer.isActive():
+            self._render_timer.start(20)
 
         self._wheel_timer.start(120)
 
@@ -694,16 +717,14 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         """Inicia el desplazamiento fluido (pan) continuo con botón del ratón manteniendo escala de 1 en 1."""
         if event.button() in (Qt.LeftButton, Qt.MiddleButton, Qt.RightButton):
             self._is_panning = True
+            self._is_interacting = True
             self._has_dragged = False
             pos = event.position() if hasattr(event, "position") else event.pos()
             self._press_coord = (pos.x(), pos.y())
-
-            # Iniciar pan nativo de Matplotlib
-            mpl_y = self.figure.bbox.height - pos.y()
-            self.ax.start_pan(pos.x(), mpl_y, 1)
-
-            # MANTENER SIEMPRE LA ESCALA ESTRICTA DE 1 EN 1 (sin saltos a 5 en 5)
-            self._update_locators()
+            self._press_xlim = list(self.ax.get_xlim())
+            self._press_ylim = list(self.ax.get_ylim())
+            self._target_xlim = list(self._press_xlim)
+            self._target_ylim = list(self._press_ylim)
 
             self.setCursor(Qt.ClosedHandCursor)
             event.accept()
@@ -711,17 +732,26 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        """Desplaza el lienzo en tiempo real a 50-60 FPS fluidos manteniendo la escala de 1 en 1."""
-        if self._is_panning and self._press_coord is not None:
+        """Desplaza el lienzo en tiempo real a 50 FPS fluidos manteniendo la escala de 1 en 1."""
+        if self._is_panning and self._press_coord is not None and self._press_xlim is not None and self._press_ylim is not None:
             pos = event.position() if hasattr(event, "position") else event.pos()
             dx = pos.x() - self._press_coord[0]
             dy = pos.y() - self._press_coord[1]
             if abs(dx) > 2 or abs(dy) > 2:
                 self._has_dragged = True
 
-            mpl_y = self.figure.bbox.height - pos.y()
-            self.ax.drag_pan(1, None, pos.x(), mpl_y)
-            self.draw_idle()
+            bbox = self.ax.bbox
+            x_span = self._press_xlim[1] - self._press_xlim[0]
+            y_span = self._press_ylim[1] - self._press_ylim[0]
+            dx_data = dx * (x_span / max(bbox.width, 1.0))
+            dy_data = dy * (y_span / max(bbox.height, 1.0))
+
+            self._target_xlim = [self._press_xlim[0] - dx_data, self._press_xlim[1] - dx_data]
+            self._target_ylim = [self._press_ylim[0] + dy_data, self._press_ylim[1] + dy_data]
+
+            if not self._render_timer.isActive():
+                self._render_timer.start(20)
+
             event.accept()
             return
         super().mouseMoveEvent(event)
@@ -731,10 +761,14 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
         self.setCursor(Qt.OpenHandCursor)
         if self._is_panning:
             self._is_panning = False
-            self.ax.end_pan()
+            self._is_interacting = False
+            self._render_timer.stop()
+
+            if self._target_xlim is not None and self._target_ylim is not None:
+                self.ax.set_xlim(self._target_xlim)
+                self.ax.set_ylim(self._target_ylim)
 
             self._update_locators()
-            self.ax.minorticks_on()
 
             if self._has_dragged:
                 self._refresh_curve_data(force=False)
@@ -788,9 +822,13 @@ class GeoGebraCartesianCanvas(FigureCanvasQTAgg):
 
     def _on_wheel_stopped(self):
         """Restaura la escala exacta de 1 en 1 y sincroniza curvas de alta resolución al detenerse la rueda."""
+        self._render_timer.stop()
+        self._is_interacting = False
         self._is_zooming = False
+        if self._target_xlim is not None and self._target_ylim is not None:
+            self.ax.set_xlim(self._target_xlim)
+            self.ax.set_ylim(self._target_ylim)
         self._update_locators()
-        self.ax.minorticks_on()
         self._refresh_curve_data(force=False)
         self.draw()
 

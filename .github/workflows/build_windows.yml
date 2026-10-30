@@ -29,13 +29,8 @@ jobs:
         run: |
           pyinstaller --clean --noconfirm --name "SerieDeTaylor" --onedir --windowed main.py
 
-      - name: Comprimir paquete portable para descarga rápida
-        shell: pwsh
-        run: |
-          Compress-Archive -Path dist/SerieDeTaylor -DestinationPath dist/SerieDeTaylor-Windows-Portable.zip
-
-      - name: Subir paquete SerieDeTaylor-Windows-Portable.zip
+      - name: Subir aplicación ejecutable de Windows (Portable)
         uses: actions/upload-artifact@v4
         with:
-          name: SerieDeTaylor-Windows-Portable
-          path: dist/SerieDeTaylor-Windows-Portable.zip
+          name: SerieDeTaylor-Windows
+          path: dist/SerieDeTaylor/
